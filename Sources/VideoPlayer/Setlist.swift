@@ -6,7 +6,10 @@ import UniformTypeIdentifiers
 /// The setlist and show settings. Saved automatically, so the app reopens where you left off.
 final class Setlist: ObservableObject {
     @Published var cues: [Cue] = [] { didSet { scheduleSave() } }
-    @Published var defaultLoop: FileRef? { didSet { scheduleSave() } }
+    /// Loop 1, Loop 2, Loop 3 (nil = empty slot). After video 1 comes Loop 1, after video 2 Loop 2,
+    /// after video 3 Loop 3, after video 4 Loop 1 again, and so on. Empty slots are skipped.
+    @Published var loopSlots: [FileRef?] = Array(repeating: nil, count: Setlist.loopSlotCount) { didSet { scheduleSave() } }
+    static let loopSlotCount = 3
     @Published var crossfade: Double = 0.5 { didSet { scheduleSave() } }
     @Published var fillScreen = false { didSet { scheduleSave() } }
     @Published var videoAudio = true { didSet { scheduleSave() } }
@@ -63,15 +66,28 @@ final class Setlist: ObservableObject {
         if let url { loadThumbnail(path: url.path) }
     }
 
-    func setDefaultLoop(_ url: URL?) {
-        defaultLoop = url.map { FileRef(url: $0) }
+    func setLoopSlot(_ slot: Int, _ url: URL?) {
+        guard loopSlots.indices.contains(slot) else { return }
+        loopSlots[slot] = url.map { FileRef(url: $0) }
         if let url { loadThumbnail(path: url.path) }
     }
 
-    /// The loop that plays after a given video (its own loop, or the default one).
+    /// The loop that plays after a video: its own loop if it has one, otherwise Loops 1–3 in turn by the
+    /// video's place in the setlist (video 1 → Loop 1, 2 → Loop 2, 3 → Loop 3, 4 → Loop 1 …).
+    /// Before any video has played (cueID nil) it is the first loop.
     func loopFor(cueID: UUID?) -> FileRef? {
-        if let cueID, let cue = cues.first(where: { $0.id == cueID }), let own = cue.loop { return own }
-        return defaultLoop
+        let filled = loopSlots.compactMap { $0 }
+        guard let cueID, let i = cues.firstIndex(where: { $0.id == cueID }) else { return filled.first }
+        if let own = cues[i].loop { return own }
+        return filled.isEmpty ? nil : filled[i % filled.count]
+    }
+
+    /// Which loop slot (1–3) follows the video at this position. nil when it has its own loop or no loops are set.
+    func loopSlotNumber(forCueAt i: Int) -> Int? {
+        guard cues.indices.contains(i), cues[i].loop == nil else { return nil }
+        let filled = loopSlots.indices.filter { loopSlots[$0] != nil }
+        guard !filled.isEmpty else { return nil }
+        return filled[i % filled.count] + 1
     }
 
     // MARK: - Panels
@@ -88,14 +104,26 @@ final class Setlist: ObservableObject {
         if result == .OK { add(urls: panel.urls) }
     }
 
-    func chooseLoop(for cueID: UUID?) {
+    /// Choose a loop video for after one particular video (overrides the turn-taking loops).
+    func chooseLoop(for cueID: UUID) {
+        guard let url = pickOneVideo(title: "Choose the loop for after this video") else { return }
+        setLoop(url, for: cueID)
+    }
+
+    /// Choose the video for Loop 1, 2 or 3 (slot 0, 1, 2).
+    func chooseLoopSlot(_ slot: Int) {
+        guard let url = pickOneVideo(title: "Choose the video for Loop \(slot + 1)") else { return }
+        setLoopSlot(slot, url)
+    }
+
+    private func pickOneVideo(title: String) -> URL? {
         let panel = NSOpenPanel()
-        panel.title = cueID == nil ? "Choose the default loop video" : "Choose the loop for after this video"
+        panel.title = title
         panel.allowedContentTypes = Self.videoTypes
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        if let cueID { setLoop(url, for: cueID) } else { setDefaultLoop(url) }
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
     }
 
     func saveSetlistFile() {
@@ -119,7 +147,7 @@ final class Setlist: ObservableObject {
     // MARK: - Saving
 
     private func snapshot() -> ShowFile {
-        ShowFile(cues: cues, defaultLoop: defaultLoop, crossfade: crossfade,
+        ShowFile(cues: cues, loopSlots: loopSlots, defaultLoop: loopSlots.compactMap { $0 }.first, crossfade: crossfade,
                  fillScreen: fillScreen, videoAudio: videoAudio)
     }
 
@@ -151,11 +179,15 @@ final class Setlist: ObservableObject {
             show.cues[i].file.refresh()
             show.cues[i].loop?.refresh()
         }
-        show.defaultLoop?.refresh()
+        // Older setlists had a single loop: it becomes Loop 1.
+        var slots = show.loopSlots ?? [show.defaultLoop]
+        if slots.count < Self.loopSlotCount { slots += Array(repeating: nil, count: Self.loopSlotCount - slots.count) }
+        slots = Array(slots.prefix(Self.loopSlotCount))
+        for i in slots.indices { slots[i]?.refresh() }
 
         isLoading = true
         cues = show.cues
-        defaultLoop = show.defaultLoop
+        loopSlots = slots
         crossfade = show.crossfade
         fillScreen = show.fillScreen
         videoAudio = show.videoAudio
@@ -165,7 +197,8 @@ final class Setlist: ObservableObject {
             loadInfo(cueID: cue.id, path: cue.file.path)
             if let loop = cue.loop { loadThumbnail(path: loop.path) }
         }
-        if let loop = defaultLoop { loadThumbnail(path: loop.path) }
+        for case let loop? in loopSlots { loadThumbnail(path: loop.path) }
+        showLog("Loaded setlist: \(cues.count) videos; loops: \(loopSlots.map { $0?.name ?? "-" }.joined(separator: ", "))")
     }
 
     // MARK: - Durations and thumbnails (loaded in the background)

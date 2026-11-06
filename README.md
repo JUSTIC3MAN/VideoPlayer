@@ -9,7 +9,7 @@ It's built for the screen behind the band. There's a control window on the lapto
 - **Setlist.** Add videos with the button or by dropping them in from Finder, then drag them into order. Double-click a video to play it right away. Right-click a video for more options.
 - **Next.** Plays the video marked NEXT. The next video is already loaded in a second player, so it starts instantly.
 - **Seek bar.** Click or drag the time bar under the preview to jump to any point in the playing video.
-- **Loop visual.** When a video ends, the picture fades into the loop video, which repeats with no gap until you press Next. Set one default loop, or give any video its own loop: right-click it and choose *Choose Loop for After This Video…*.
+- **Loop visuals (up to 3, taking turns).** When a video ends, the picture fades into a loop that repeats with no gap until you press Next. Set Loop 1, 2 and 3 and they take turns by the video's place in the setlist: after video 1 comes Loop 1, after video 2 Loop 2, after video 3 Loop 3, after video 4 Loop 1 again, and so on (empty slots are skipped). Each row in the setlist shows which loop follows it. Any video can have its own loop instead: right-click it and choose *Choose Loop for After This Video…*.
 - **Output.** A full-screen window on the screen you pick, with no mouse pointer. The control window has a live preview of exactly what's on the output.
 - **Crossfade.** 0–3 seconds between videos and into the loop (0 = hard cut). A second press of Next during a fade is ignored, so a double-tap on a clicker can't skip a song.
 - **Blackout, Stop, Back.** Blackout fades the screen to black. Stop fades out and resets NEXT to the first video. Back moves NEXT up one video without playing anything.

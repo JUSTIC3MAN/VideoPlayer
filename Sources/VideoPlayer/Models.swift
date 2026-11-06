@@ -32,7 +32,7 @@ struct FileRef: Codable, Equatable {
 struct Cue: Identifiable, Codable, Equatable {
     var id = UUID()
     var file: FileRef
-    /// Loop shown after this video. nil = use the default loop.
+    /// Loop shown after this video. nil = use Loops 1–3 in turn.
     var loop: FileRef?
     var duration: Double = 0
 
@@ -41,8 +41,11 @@ struct Cue: Identifiable, Codable, Equatable {
 
 /// What is saved to disk (the current setlist and any "Save Setlist As" file).
 struct ShowFile: Codable {
-    var version = 1
+    var version = 2
     var cues: [Cue]
+    /// Loop 1–3 (version 2). They take turns after the videos.
+    var loopSlots: [FileRef?]?
+    /// Version 1 had one loop; still read from older setlists (and written as Loop 1's file for them).
     var defaultLoop: FileRef?
     var crossfade: Double
     var fillScreen: Bool

@@ -85,7 +85,7 @@ struct SetlistPane: View {
             Divider()
             Button("Choose Loop for After This Video…") { setlist.chooseLoop(for: id) }
             if setlist.cues.first(where: { $0.id == id })?.loop != nil {
-                Button("Use the Default Loop") { setlist.setLoop(nil, for: id) }
+                Button("Use Loops 1–3 in Turn") { setlist.setLoop(nil, for: id) }
             }
             Divider()
         }
@@ -121,9 +121,11 @@ struct CueRow: View {
                 HStack(spacing: 8) {
                     Text(formatTime(cue.duration)).monospacedDigit()
                     if let loop = cue.loop {
-                        Label("then loop: \(loop.name)", systemImage: "repeat").lineLimit(1)
+                        Label("then its own loop: \(loop.name)", systemImage: "repeat").lineLimit(1)
+                    } else if let n = setlist.loopSlotNumber(forCueAt: index), let loop = setlist.loopSlots[n - 1] {
+                        Label("then Loop \(n): \(loop.name)", systemImage: "repeat").lineLimit(1)
                     } else {
-                        Label("then default loop", systemImage: "repeat")
+                        Label("then black (no loop chosen)", systemImage: "repeat")
                     }
                 }
                 .font(.caption)
@@ -242,7 +244,7 @@ struct SidePanel: View {
                         .foregroundStyle(.red)
                 }
                 TransportView()
-                GroupBox("Loop visual") { LoopPicker().padding(4) }
+                GroupBox("Loop visuals") { LoopPicker().padding(4) }
                 GroupBox("Output") { OutputSettings().padding(4) }
                 ShortcutHelp()
             }
@@ -389,32 +391,44 @@ struct TransportView: View {
     }
 }
 
+/// Loop 1–3. They take turns after the videos: video 1 → Loop 1, 2 → Loop 2, 3 → Loop 3, 4 → Loop 1 …
 struct LoopPicker: View {
-    @EnvironmentObject var setlist: Setlist
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                Thumbnail(image: setlist.defaultLoop.flatMap { setlist.thumbnails[$0.path] })
-                    .frame(width: 96, height: 54)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(setlist.defaultLoop?.name ?? "No loop chosen (black)").lineLimit(1)
-                    Text("Plays after each video until you press Next.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            ForEach(0..<Setlist.loopSlotCount, id: \.self) { slot in
+                LoopSlotRow(slot: slot)
             }
-            HStack {
-                Button("Choose…") { setlist.chooseLoop(for: nil) }
-                if setlist.defaultLoop != nil {
-                    Button("Clear") { setlist.setDefaultLoop(nil) }
-                }
-            }
-            Text("A video can have its own loop: right-click it in the setlist.")
+            Text("Loops take turns: after video 1 comes Loop 1, after video 2 Loop 2, after video 3 Loop 3, then Loop 1 again after video 4. Empty slots are skipped. A video can also have its own loop: right-click it in the setlist.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct LoopSlotRow: View {
+    @EnvironmentObject var setlist: Setlist
+    let slot: Int
+
+    var body: some View {
+        let ref = setlist.loopSlots[slot]
+        HStack(spacing: 8) {
+            Text("\(slot + 1)")
+                .font(.system(.body, design: .rounded).bold())
+                .foregroundStyle(.secondary)
+                .frame(width: 14)
+            Thumbnail(image: ref.flatMap { setlist.thumbnails[$0.path] })
+                .frame(width: 72, height: 40)
+            Text(ref?.name ?? "Empty")
+                .lineLimit(1)
+                .foregroundStyle(ref == nil ? Color.secondary : Color.primary)
+            Spacer(minLength: 4)
+            Button("Choose…") { setlist.chooseLoopSlot(slot) }
+            if ref != nil {
+                Button("Clear") { setlist.setLoopSlot(slot, nil) }
+            }
+        }
     }
 }
 

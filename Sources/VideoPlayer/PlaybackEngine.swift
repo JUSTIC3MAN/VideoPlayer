@@ -101,7 +101,7 @@ final class PlaybackEngine: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.cuesChanged() }
             .store(in: &bag)
-        setlist.$defaultLoop
+        setlist.$loopSlots
             .dropFirst()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.loopSettingChanged() }

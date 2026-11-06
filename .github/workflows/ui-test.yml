@@ -1,4 +1,4 @@
-# Opens VideoPlayer on a GitHub Mac (Apple Silicon) with three test videos and a loop, presses the show
+# Opens VideoPlayer on a GitHub Mac (Apple Silicon) with four test videos and Loops 1-3, presses the show
 # keys and clicks the on-screen buttons, and takes a screenshot after each step.
 # Screenshots and logs go to the "ui-test" pre-release (not the download people install).
 name: UI test
@@ -20,7 +20,24 @@ jobs:
       - name: Build
         run: ./build.sh
 
-      - name: Prepare a test setlist (3 videos + a loop)
+      - name: Old setlist format (one loop) carries over as Loop 1
+        run: |
+          M="$PWD/.github/test-media"
+          D="$HOME/Library/Application Support/VideoPlayer"
+          mkdir -p "$D"
+          python3 - "$M" "$D/Current Setlist.json" <<'PY'
+          import json, sys, uuid
+          m, out = sys.argv[1], sys.argv[2]
+          cues = [{"id": str(uuid.uuid4()).upper(), "file": {"path": f"{m}/song_red.mp4"}, "duration": 0}]
+          json.dump({"version": 1, "cues": cues, "defaultLoop": {"path": f"{m}/loop_bars.mp4"},
+                     "crossfade": 0.5, "fillScreen": False, "videoAudio": True}, open(out, "w"))
+          PY
+          build/VideoPlayer.app/Contents/MacOS/VideoPlayer > migrate.log 2>&1 &
+          sleep 6; pkill -x VideoPlayer; sleep 1
+          grep "Loaded setlist" migrate.log
+          grep -q "loops: loop_bars, -, -" migrate.log && echo "::notice title=Migration::old one-loop setlist -> Loop 1 = loop_bars" || { echo "::error title=Migration failed::$(grep 'Loaded setlist' migrate.log)"; exit 1; }
+
+      - name: Prepare a test setlist (4 videos + Loops 1-3)
         run: |
           M="$PWD/.github/test-media"
           D="$HOME/Library/Application Support/VideoPlayer"
@@ -29,8 +46,9 @@ jobs:
           import json, sys, uuid
           m, out = sys.argv[1], sys.argv[2]
           cues = [{"id": str(uuid.uuid4()).upper(), "file": {"path": f"{m}/{n}.mp4"}, "duration": 0}
-                  for n in ("song_red", "song_blue", "song_green")]
-          show = {"version": 1, "cues": cues, "defaultLoop": {"path": f"{m}/loop_bars.mp4"},
+                  for n in ("song_red", "song_blue", "song_green", "song_yellow")]
+          loops = [{"path": f"{m}/{n}.mp4"} for n in ("loop_bars", "loop_2", "loop_3")]
+          show = {"version": 2, "cues": cues, "loopSlots": loops,
                   "crossfade": 0.5, "fillScreen": False, "videoAudio": True}
           json.dump(show, open(out, "w"))
           PY
@@ -49,7 +67,7 @@ jobs:
           # Real mouse clicks at the button positions (screen points; the window opens at the same place every run)
           click() { front; sleep 0.3; cliclick "c:$2" >> steps.log 2>&1; step "clicked $1 at $2"; }
           dclick() { front; sleep 0.3; cliclick "dc:$2" >> steps.log 2>&1; step "double-clicked $1 at $2"; }
-          NEXT=775,457; BACK=634,513; LOOP=721,513; BLACKOUT=818,513; STOP=916,513; ADD=366,87; ROW3=220,304; SEEK75=884,395
+          NEXT=775,457; BACK=634,513; LOOP=721,513; BLACKOUT=818,513; STOP=916,513; ADD=366,87; ROW3=220,304; ROW4=220,382; SEEK75=884,395
 
           build/VideoPlayer.app/Contents/MacOS/VideoPlayer > app.log 2>&1 &
           sleep 8
@@ -74,6 +92,8 @@ jobs:
           click "Loop" $LOOP;           sleep 1;   shot 11_click_loop
           click "Back" $BACK;           sleep 1;   shot 12_click_back_next_moves_up
           dclick "row 3 (green)" $ROW3; sleep 1.5; shot 13_doubleclick_row3_plays_green
+          sleep 3;                                 shot 13b_green_ended_loop3
+          dclick "row 4 (yellow)" $ROW4; sleep 4.5; shot 13c_yellow_ended_back_to_loop1
 
           step "ADD VIDEOS (file window, pick a video by its path)"
           click "Add Videos" $ADD;      sleep 3;   shot 14_add_videos_after_3s
