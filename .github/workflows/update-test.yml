@@ -1,0 +1,51 @@
+# Checks the in-app updater: installs an old release, opens it, accepts "Update and Restart",
+# and confirms the newer version replaced it and reopened. Results go to the ui-test pre-release.
+name: Update test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install an old version (1.0.3) the way the Terminal line does
+        run: |
+          curl -fL -o old.zip https://github.com/${{ github.repository }}/releases/download/v1.0.3/VideoPlayer.zip
+          ditto -x -k old.zip old
+          rm -rf /Applications/VideoPlayer.app
+          mv old/VideoPlayer.app /Applications/
+          defaults read /Applications/VideoPlayer.app/Contents/Info CFBundleShortVersionString
+
+      - name: Open it and click "Update and Restart"
+        run: |
+          set +e
+          log() { echo "$1" | tee -a update.log; }
+          log "installed: $(defaults read /Applications/VideoPlayer.app/Contents/Info CFBundleShortVersionString)"
+          open /Applications/VideoPlayer.app
+          sleep 12
+          screencapture -x update_1_alert.png
+          # The update alert's default button is "Update and Restart": press Return.
+          osascript -e 'tell application "System Events" to tell process "VideoPlayer" to set frontmost to true' -e 'tell application "System Events" to key code 36' >> update.log 2>&1
+          sleep 20
+          screencapture -x update_2_after.png
+          NEW="$(defaults read /Applications/VideoPlayer.app/Contents/Info CFBundleShortVersionString)"
+          log "after update: $NEW"
+          if pgrep -x VideoPlayer >/dev/null; then log "running: yes"; else log "running: no"; fi
+          cat update.log
+          [ "$NEW" != "1.0.3" ] && pgrep -x VideoPlayer >/dev/null
+
+      - name: Publish results to the ui-test pre-release
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view ui-test >/dev/null 2>&1 || gh release create ui-test --prerelease --title "UI test results (not an install)" --notes "Screenshots from the automated tests. Install VideoPlayer from the latest release instead."
+          gh release upload ui-test update.log update_1_alert.png update_2_after.png --clobber
