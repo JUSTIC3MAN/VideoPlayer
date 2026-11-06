@@ -1,5 +1,5 @@
-# Builds VideoPlayer.app on a GitHub Mac every time main changes, and publishes it as the latest release.
-# The install command and the app's own updater download from that release.
+# Builds VideoPlayer.app on a GitHub Mac every time main changes, checks that it opens,
+# publishes it as the latest release, then installs it with the same one-line command users run.
 name: Build and release
 
 on:
@@ -12,12 +12,33 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-14   # macOS Sonoma, like the show Mac
     steps:
       - uses: actions/checkout@v4
 
       - name: Build (Intel + Apple Silicon)
         run: UNIVERSAL=1 VERSION="1.0.${{ github.run_number }}" BUILD="${{ github.run_number }}" ./build.sh
+
+      - name: Launch test (open the app for 15 seconds)
+        run: |
+          set +e
+          annotate() { python3 -c 'import sys; t=open(sys.argv[3], errors="replace").read()[-6000:] or "(empty)"; print("::%s title=%s::%s" % (sys.argv[1], sys.argv[2], t.replace("%","%25").replace("\r","").replace("\n","%0A")))' "$@"; }
+          build/VideoPlayer.app/Contents/MacOS/VideoPlayer > app.log 2>&1 &
+          PID=$!
+          sleep 15
+          screencapture -x screenshot.png 2>/dev/null || true
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "VideoPlayer is still running after 15 seconds."
+            kill "$PID"
+            annotate notice "Launch test passed - app log" app.log
+          else
+            wait "$PID"; CODE=$?
+            annotate error "VideoPlayer quit on launch (exit $CODE) - app log" app.log
+            for f in ~/Library/Logs/DiagnosticReports/VideoPlayer*; do
+              [ -f "$f" ] && annotate error "Crash report" "$f"
+            done
+            exit 1
+          fi
 
       - name: Zip the app
         run: ditto -c -k --keepParent build/VideoPlayer.app VideoPlayer.zip
@@ -26,7 +47,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v1.0.${{ github.run_number }}" VideoPlayer.zip \
+          FILES="VideoPlayer.zip"
+          [ -s screenshot.png ] && FILES="$FILES screenshot.png"
+          gh release create "v1.0.${{ github.run_number }}" $FILES \
             --title "VideoPlayer 1.0.${{ github.run_number }}" \
-            --notes "Built from ${{ github.sha }}" \
+            --notes "Built from ${{ github.sha }} and launch-tested on macOS Sonoma." \
             --latest
+
+      - name: Install test (the one-line install command, as a user runs it)
+        run: |
+          annotate() { python3 -c 'import sys; t=open(sys.argv[3], errors="replace").read()[-6000:] or "(empty)"; print("::%s title=%s::%s" % (sys.argv[1], sys.argv[2], t.replace("%","%25").replace("\r","").replace("\n","%0A")))' "$@"; }
+          set +e
+          curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/install.sh" | bash > install.log 2>&1
+          CODE=$?
+          sleep 10
+          if [ "$CODE" -eq 0 ] && pgrep -x VideoPlayer >/dev/null; then
+            annotate notice "Install test passed - installer output" install.log
+            pkill -x VideoPlayer
+          else
+            annotate error "Install test failed (exit $CODE) - installer output" install.log
+            exit 1
+          fi
