@@ -35,34 +35,47 @@ jobs:
           json.dump(show, open(out, "w"))
           PY
 
+      - name: Install a mouse-click tool
+        run: brew install cliclick
+
       - name: Run the app, press keys and click buttons
         run: |
           set +e
           mkdir -p shots
-          S=.github/ui-test/click.applescript
           step() { echo "== $1" | tee -a steps.log; }
           shot() { screencapture -x "shots/$1.png"; }
-          key()  { osascript -e "tell application \"System Events\" to tell process \"VideoPlayer\" to set frontmost to true" -e "tell application \"System Events\" to $1" >> steps.log 2>&1; }
-          click() { osascript "$S" "$1" >> steps.log 2>&1; }
+          front() { osascript -e 'tell application "System Events" to tell process "VideoPlayer" to set frontmost to true' >> steps.log 2>&1; }
+          key()  { front; osascript -e "tell application \"System Events\" to $1" >> steps.log 2>&1; }
+          # Real mouse clicks at the button positions (screen points; the window opens at the same place every run)
+          click() { front; sleep 0.3; cliclick "c:$2" >> steps.log 2>&1; step "clicked $1 at $2"; }
+          dclick() { front; sleep 0.3; cliclick "dc:$2" >> steps.log 2>&1; step "double-clicked $1 at $2"; }
+          NEXT=775,457; BACK=634,513; LOOP=721,513; BLACKOUT=818,513; STOP=916,513; ADD=366,87; ROW3=220,304
 
           build/VideoPlayer.app/Contents/MacOS/VideoPlayer > app.log 2>&1 &
           sleep 8
-          step "Buttons the app exposes"; osascript "$S" --list >> steps.log 2>&1
+          front; sleep 1
           shot 01_opened
 
-          step "Space (Next) -> plays video 1 (red)";   key "key code 49";  sleep 1.5; shot 02_space_plays_red
-          sleep 3.5;                                                         shot 03_red_ended_loop
-          step "Right arrow (Next) -> video 2 (blue)";  key "key code 124"; sleep 1.5; shot 04_right_plays_blue
-          step "Click NEXT button -> video 3 (green)";  click "NEXT";       sleep 1.5; shot 05_click_next_green
-          step "Click Blackout";                        click "Blackout";   sleep 1;   shot 06_click_blackout
-          step "Click Blackout again";                  click "Blackout";   sleep 1;   shot 07_blackout_off
-          step "Click Loop";                            click "Loop";       sleep 1.5; shot 08_click_loop
-          step "Click Back (NEXT moves back one)";      click "Back";       sleep 1;   shot 09_click_back
-          step "Click Stop";                            click "Stop";       sleep 1.5; shot 10_click_stop
-          step "Click Add Videos (file window opens)";  click "Add Videos"; sleep 2;   shot 11_click_add_videos
+          step "KEYS"
+          key "key code 49";  sleep 1.5; shot 02_space_plays_red
+          sleep 3.5;                     shot 03_red_ended_into_loop
+          key "key code 124"; sleep 1.5; shot 04_right_arrow_plays_blue
+          sleep 3.5
+
+          step "BUTTONS"
+          click "Stop" $STOP;           sleep 1.5; shot 05_click_stop_black
+          click "NEXT" $NEXT;           sleep 1.5; shot 06_click_next_plays_red
+          sleep 3.5;                               shot 07_red_ended_into_loop
+          click "NEXT" $NEXT;           sleep 1.5; shot 08_click_next_plays_blue
+          click "Blackout" $BLACKOUT;   sleep 1;   shot 09_click_blackout_on
+          click "Blackout" $BLACKOUT;   sleep 1;   shot 10_click_blackout_off
+          click "Loop" $LOOP;           sleep 1.5; shot 11_click_loop
+          click "Back" $BACK;           sleep 1;   shot 12_click_back_next_moves_up
+          dclick "row 3 (green)" $ROW3; sleep 1.5; shot 13_doubleclick_row3_plays_green
+          click "Add Videos" $ADD;      sleep 2;   shot 14_click_add_videos_panel
           key "key code 53"; sleep 1
-          step "Key F (show output full screen)";       key "keystroke \"f\""; sleep 2; shot 12_output_fullscreen
-          key "key code 53"; sleep 1;                                                  shot 13_output_hidden
+          key "keystroke \"f\""; sleep 2;          shot 15_key_f_output_fullscreen
+          key "key code 53"; sleep 1;              shot 16_esc_output_hidden
 
           pkill -x VideoPlayer
           echo "--- app log" >> steps.log; cat app.log >> steps.log
