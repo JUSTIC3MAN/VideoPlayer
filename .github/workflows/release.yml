@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14   # macOS Sonoma, like the show Mac
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -51,7 +51,7 @@ jobs:
           [ -s screenshot.png ] && FILES="$FILES screenshot.png"
           gh release create "v1.0.${{ github.run_number }}" $FILES \
             --title "VideoPlayer 1.0.${{ github.run_number }}" \
-            --notes "Built from ${{ github.sha }} and launch-tested on macOS Sonoma." \
+            --notes "Built from ${{ github.sha }} and launch-tested on a GitHub Mac." \
             --latest
 
       - name: Install test (the one-line install command, as a user runs it)
