@@ -2,6 +2,11 @@ import AVFoundation
 import AppKit
 import Combine
 
+/// Writes what the show does to the system log (Console app, filter "VideoPlayer") and to stderr.
+func showLog(_ message: String) {
+    NSLog("[VideoPlayer] %@", message)
+}
+
 enum ShowPhase: Equatable {
     case idle      // nothing on screen yet (black)
     case playing   // a setlist video is playing
@@ -181,8 +186,8 @@ final class PlaybackEngine: ObservableObject {
     /// against a double-click on a remote skipping a song).
     func next() {
         let lockout = max(0.35, min(setlist.crossfade, 1.0))
-        guard Date().timeIntervalSince(lastGo) > lockout else { return }
-        guard let i = index(of: armedCueID) else { NSSound.beep(); return }
+        guard Date().timeIntervalSince(lastGo) > lockout else { showLog("Next ignored (pressed again during the fade)"); return }
+        guard let i = index(of: armedCueID) else { showLog("Next: nothing armed (setlist empty or at the end)"); NSSound.beep(); return }
         go(to: i)
     }
 
@@ -214,6 +219,7 @@ final class PlaybackEngine: ObservableObject {
         lastGo = Date()
         lastError = nil
         blackout = false
+        showLog("Play #\(index + 1) \"\(cue.title)\" (from \(phase), fade \(fade)s)")
 
         if slotCueID[target] != cue.id || slotPath[target] != cue.file.path || slotPlayers[target].currentItem == nil {
             load(slot: target, cue: cue)
@@ -272,6 +278,7 @@ final class PlaybackEngine: ObservableObject {
             if wasBlack { render(0.4) }
             return
         }
+        showLog("Loop visual: \(setlist.loopFor(cueID: playingCueID)?.name ?? "none chosen (black)")")
         if looper == nil { prepareLoop(for: playingCueID) }
         loopPlayer.play()
 
@@ -302,11 +309,13 @@ final class PlaybackEngine: ObservableObject {
 
     func toggleBlackout() {
         blackout.toggle()
+        showLog("Blackout \(blackout ? "on" : "off")")
         render(0.4)
     }
 
     /// Fades to black, stops everything and puts NEXT back on the first video.
     func stop() {
+        showLog("Stop")
         phase = .idle
         blackout = false
         playingCueID = nil
@@ -364,6 +373,7 @@ final class PlaybackEngine: ObservableObject {
             .sink { [weak self, weak item] status in
                 guard status == .failed, let self else { return }
                 self.lastError = "Can't play \"\(title)\": \(item?.error?.localizedDescription ?? "unknown error")"
+                showLog(self.lastError ?? "")
                 if self.activeSlot == slot, self.phase == .playing { self.showLoop() }
             }
 
@@ -372,6 +382,7 @@ final class PlaybackEngine: ObservableObject {
 
     private func videoEnded(slot: Int) {
         guard slot == activeSlot, phase == .playing else { return }
+        showLog("Video ended")
         showLoop()
     }
 

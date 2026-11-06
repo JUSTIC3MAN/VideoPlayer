@@ -41,10 +41,11 @@ final class Setlist: ObservableObject {
 
     func add(urls: [URL], at index: Int? = nil) {
         let videos = urls.filter(Self.isVideo)
-        guard !videos.isEmpty else { NSSound.beep(); return }
+        guard !videos.isEmpty else { showLog("Add: none of the chosen files are videos"); NSSound.beep(); return }
         let newCues = videos.map { Cue(file: FileRef(url: $0)) }
         let position = min(max(index ?? cues.count, 0), cues.count)
         cues.insert(contentsOf: newCues, at: position)
+        showLog("Added \(newCues.count) video(s); setlist now \(cues.count)")
         for cue in newCues { loadInfo(cueID: cue.id, path: cue.file.path) }
     }
 

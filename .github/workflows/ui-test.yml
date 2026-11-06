@@ -1,0 +1,78 @@
+# Opens VideoPlayer on a GitHub Mac (Apple Silicon) with three test videos and a loop, presses the show
+# keys and clicks the on-screen buttons, and takes a screenshot after each step.
+# Screenshots and logs go to the "ui-test" pre-release (not the download people install).
+name: UI test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ui-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: ./build.sh
+
+      - name: Prepare a test setlist (3 videos + a loop)
+        run: |
+          M="$PWD/.github/test-media"
+          D="$HOME/Library/Application Support/VideoPlayer"
+          mkdir -p "$D"
+          python3 - "$M" "$D/Current Setlist.json" <<'PY'
+          import json, sys, uuid
+          m, out = sys.argv[1], sys.argv[2]
+          cues = [{"id": str(uuid.uuid4()).upper(), "file": {"path": f"{m}/{n}.mp4"}, "duration": 0}
+                  for n in ("song_red", "song_blue", "song_green")]
+          show = {"version": 1, "cues": cues, "defaultLoop": {"path": f"{m}/loop_bars.mp4"},
+                  "crossfade": 0.5, "fillScreen": False, "videoAudio": True}
+          json.dump(show, open(out, "w"))
+          PY
+
+      - name: Run the app, press keys and click buttons
+        run: |
+          set +e
+          mkdir -p shots
+          S=.github/ui-test/click.applescript
+          step() { echo "== $1" | tee -a steps.log; }
+          shot() { screencapture -x "shots/$1.png"; }
+          key()  { osascript -e "tell application \"System Events\" to tell process \"VideoPlayer\" to set frontmost to true" -e "tell application \"System Events\" to $1" >> steps.log 2>&1; }
+          click() { osascript "$S" "$1" >> steps.log 2>&1; }
+
+          build/VideoPlayer.app/Contents/MacOS/VideoPlayer > app.log 2>&1 &
+          sleep 8
+          step "Buttons the app exposes"; osascript "$S" --list >> steps.log 2>&1
+          shot 01_opened
+
+          step "Space (Next) -> plays video 1 (red)";   key "key code 49";  sleep 1.5; shot 02_space_plays_red
+          sleep 3.5;                                                         shot 03_red_ended_loop
+          step "Right arrow (Next) -> video 2 (blue)";  key "key code 124"; sleep 1.5; shot 04_right_plays_blue
+          step "Click NEXT button -> video 3 (green)";  click "NEXT";       sleep 1.5; shot 05_click_next_green
+          step "Click Blackout";                        click "Blackout";   sleep 1;   shot 06_click_blackout
+          step "Click Blackout again";                  click "Blackout";   sleep 1;   shot 07_blackout_off
+          step "Click Loop";                            click "Loop";       sleep 1.5; shot 08_click_loop
+          step "Click Back (NEXT moves back one)";      click "Back";       sleep 1;   shot 09_click_back
+          step "Click Stop";                            click "Stop";       sleep 1.5; shot 10_click_stop
+          step "Click Add Videos (file window opens)";  click "Add Videos"; sleep 2;   shot 11_click_add_videos
+          key "key code 53"; sleep 1
+          step "Key F (show output full screen)";       key "keystroke \"f\""; sleep 2; shot 12_output_fullscreen
+          key "key code 53"; sleep 1;                                                  shot 13_output_hidden
+
+          pkill -x VideoPlayer
+          echo "--- app log" >> steps.log; cat app.log >> steps.log
+          cat steps.log
+
+      - name: Publish screenshots and log to the ui-test pre-release
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd shots && zip -q ../ui-test-shots.zip *.png)
+          gh release view ui-test >/dev/null 2>&1 || gh release create ui-test --prerelease --title "UI test results (not an install)" --notes "Screenshots from the automated UI test. Install VideoPlayer from the latest release instead."
+          gh release upload ui-test ui-test-shots.zip steps.log --clobber
