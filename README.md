@@ -27,20 +27,27 @@ It's built for the screen behind the band. There's a control window on the lapto
 
 ## Install on a Mac
 
-Open **Terminal** and paste this one line:
+Works on Intel and Apple Silicon Macs with macOS 13 Ventura or newer.
+
+1. **Download:** [VideoPlayer.zip](https://github.com/JUSTIC3MAN/VideoPlayer/releases/latest/download/VideoPlayer.zip) (always the newest version).
+2. **Unzip:** open your Downloads folder and double-click `VideoPlayer.zip` (Safari often unzips it for you). You'll get `VideoPlayer.app`.
+3. **Move it:** drag `VideoPlayer.app` into your **Applications** folder.
+4. **Open it the first time.** macOS blocks apps that don't come from the App Store, so the first open takes one extra step:
+   - **macOS 14 Sonoma or older:** in Applications, **right-click** VideoPlayer → **Open** → **Open**.
+   - **macOS 15 Sequoia or newer:** double-click it and click **Done** on the warning. Then go to **System Settings → Privacy & Security**, scroll down, click **Open Anyway** and confirm.
+
+After that it opens normally with a double-click.
+
+**Or install from Terminal** (skips step 4). Paste this one line:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/JUSTIC3MAN/VideoPlayer/main/install.sh | bash
 ```
 
-It downloads the latest VideoPlayer, puts it in Applications and opens it. It works on Intel and Apple Silicon Macs with macOS 13 Ventura or newer, and nothing else needs installing.
-
-**Or download it by hand:** get `VideoPlayer.zip` from the [latest release](https://github.com/JUSTIC3MAN/VideoPlayer/releases/latest), unzip it and drag `VideoPlayer.app` into Applications. The first time you open it, macOS blocks it because it isn't from the App Store. Go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**. This is only needed once. The Terminal line above skips this step.
-
 ## Updates
 
 - VideoPlayer checks GitHub a few seconds after it opens. If there's a newer version, it asks whether to update; click **Update and Restart**. You can also choose **VideoPlayer → Check for Updates…** at any time.
-- Or run the install line again; it replaces the old version.
+- Or download the zip again and drag the new `VideoPlayer.app` into Applications (choose **Replace**), or run the Terminal line again.
 - Your setlist and settings are kept either way.
 
 Each time the code on GitHub changes, GitHub builds a new version on one of its Macs and publishes it as the latest release (see the Actions tab), so updates show up by themselves.
