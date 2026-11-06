@@ -287,8 +287,68 @@ struct ClockView: View {
                         .foregroundStyle(clock.duration > 0 && clock.duration - clock.elapsed < 10 ? Color.orange : Color.primary)
                 }
             }
-            ProgressView(value: clock.duration > 0 ? min(clock.elapsed / clock.duration, 1) : 0)
+            SeekBar(clock: clock)
         }
+    }
+}
+
+/// The time bar under the preview. Click or drag it to jump to a point in the playing video.
+struct SeekBar: View {
+    @EnvironmentObject var engine: PlaybackEngine
+    @ObservedObject var clock: ShowClock
+    @State private var dragFraction: Double?
+    @State private var hovering = false
+
+    private var canSeek: Bool { engine.phase == .playing && clock.duration > 0 }
+    private var active: Bool { canSeek && (hovering || dragFraction != nil) }
+
+    private var fraction: Double {
+        if let dragFraction { return dragFraction }
+        guard clock.duration > 0 else { return 0 }
+        return min(max(clock.elapsed / clock.duration, 0), 1)
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = max(geo.size.width, 1)
+            let barHeight: CGFloat = active ? 8 : 6
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.12))
+                    .frame(height: barHeight)
+                Capsule().fill(Color.accentColor)
+                    .frame(width: max(barHeight, width * CGFloat(fraction)), height: barHeight)
+                    .opacity(fraction > 0 ? 1 : 0)
+                if active {
+                    Circle().fill(Color.white)
+                        .shadow(color: .black.opacity(0.35), radius: 1.5)
+                        .frame(width: 14, height: 14)
+                        .offset(x: width * CGFloat(fraction) - 7)
+                }
+            }
+            .frame(width: width, height: geo.size.height)
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        guard canSeek else { return }
+                        let f = Double(min(max(value.location.x / width, 0), 1))
+                        engine.isScrubbing = true
+                        dragFraction = f
+                        engine.seek(to: f * clock.duration, precise: false)
+                    }
+                    .onEnded { value in
+                        if canSeek {
+                            let f = Double(min(max(value.location.x / width, 0), 1))
+                            engine.seek(to: f * clock.duration, precise: true)
+                        }
+                        engine.isScrubbing = false
+                        dragFraction = nil
+                    }
+            )
+        }
+        .frame(height: 14)
+        .help(canSeek ? "Click or drag to jump to a point in the video" : "")
     }
 }
 

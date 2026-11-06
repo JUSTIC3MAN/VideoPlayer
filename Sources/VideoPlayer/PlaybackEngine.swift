@@ -45,6 +45,8 @@ final class PlaybackEngine: ObservableObject {
     @Published var lastError: String?
 
     let clock = ShowClock()
+    /// True while the seek bar is being dragged, so the clock follows the mouse instead of the player.
+    var isScrubbing = false
     let slotPlayers = [AVPlayer(), AVPlayer()]
     let loopPlayer = AVQueuePlayer()
 
@@ -82,7 +84,7 @@ final class PlaybackEngine: ObservableObject {
 
         for (i, player) in slotPlayers.enumerated() {
             let token = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 5), queue: .main) { [weak self] time in
-                guard let self, self.activeSlot == i, self.phase == .playing else { return }
+                guard let self, self.activeSlot == i, self.phase == .playing, !self.isScrubbing else { return }
                 self.clock.elapsed = max(0, time.seconds)
                 if self.clock.duration <= 0,
                    let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 {
@@ -310,6 +312,18 @@ final class PlaybackEngine: ObservableObject {
             }
             self.prepareArmed()
         }
+    }
+
+    /// Jumps the playing video to a time (seek bar). While dragging, `precise` is false: it lands on the
+    /// nearest quick-to-show frame so the picture keeps up with the mouse; on release it lands exactly.
+    func seek(to seconds: Double, precise: Bool) {
+        guard phase == .playing, clock.duration > 0 else { return }
+        let target = min(max(0, seconds), max(0, clock.duration - 0.05))
+        let tolerance = precise ? CMTime.zero : CMTime(seconds: 0.25, preferredTimescale: 600)
+        slotPlayers[activeSlot].seek(to: CMTime(seconds: target, preferredTimescale: 600),
+                                     toleranceBefore: tolerance, toleranceAfter: tolerance)
+        clock.elapsed = target
+        if precise { showLog("Seek to \(formatTime(target))") }
     }
 
     func toggleBlackout() {

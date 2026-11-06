@@ -8,6 +8,7 @@ It's built for the screen behind the band. There's a control window on the lapto
 
 - **Setlist.** Add videos with the button or by dropping them in from Finder, then drag them into order. Double-click a video to play it right away. Right-click a video for more options.
 - **Next.** Plays the video marked NEXT. The next video is already loaded in a second player, so it starts instantly.
+- **Seek bar.** Click or drag the time bar under the preview to jump to any point in the playing video.
 - **Loop visual.** When a video ends, the picture fades into the loop video, which repeats with no gap until you press Next. Set one default loop, or give any video its own loop: right-click it and choose *Choose Loop for After This Video…*.
 - **Output.** A full-screen window on the screen you pick, with no mouse pointer. The control window has a live preview of exactly what's on the output.
 - **Crossfade.** 0–3 seconds between videos and into the loop (0 = hard cut). A second press of Next during a fade is ignored, so a double-tap on a clicker can't skip a song.
@@ -29,20 +30,21 @@ It's built for the screen behind the band. There's a control window on the lapto
 
 Works on Intel and Apple Silicon Macs with macOS 13 Ventura or newer.
 
-1. **Download:** [VideoPlayer.zip](https://github.com/JUSTIC3MAN/VideoPlayer/releases/latest/download/VideoPlayer.zip) (always the newest version).
-2. **Unzip:** open your Downloads folder and double-click `VideoPlayer.zip` (Safari often unzips it for you). You'll get `VideoPlayer.app`.
-3. **Move it:** drag `VideoPlayer.app` into your **Applications** folder.
-4. **Open it the first time.** macOS blocks apps that don't come from the App Store, so the first open takes one extra step:
-   - **macOS 14 Sonoma or older:** in Applications, **right-click** VideoPlayer → **Open** → **Open**.
-   - **macOS 15 Sequoia or newer:** double-click it and click **Done** on the warning. Then go to **System Settings → Privacy & Security**, scroll down, click **Open Anyway** and confirm.
-
-After that it opens normally with a double-click.
-
-**Or install from Terminal** (skips step 4). Paste this one line:
+**Easiest:** open **Terminal**, paste this one line and press Return:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/JUSTIC3MAN/VideoPlayer/main/install.sh | bash
 ```
+
+It downloads the latest VideoPlayer, puts it in Applications and opens it, with no security warnings. If it asks for a password, type the Mac's login password (nothing shows while you type) and press Return.
+
+**Or download the zip:**
+
+1. Download [VideoPlayer.zip](https://github.com/JUSTIC3MAN/VideoPlayer/releases/latest/download/VideoPlayer.zip) (always the newest version) and double-click it in Downloads if Safari didn't unzip it.
+2. Drag `VideoPlayer.app` into **Applications**.
+3. Open it the first time. macOS blocks apps that don't come from the App Store until you allow them once:
+   - **macOS 14 Sonoma or older:** right-click VideoPlayer → **Open** → **Open**.
+   - **macOS 15 Sequoia or newer:** double-click it and click **Done** on the warning. Then go to **System Settings → Privacy & Security**, click **Open Anyway** and confirm.
 
 ## Updates
 

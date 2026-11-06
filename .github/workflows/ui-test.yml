@@ -49,7 +49,7 @@ jobs:
           # Real mouse clicks at the button positions (screen points; the window opens at the same place every run)
           click() { front; sleep 0.3; cliclick "c:$2" >> steps.log 2>&1; step "clicked $1 at $2"; }
           dclick() { front; sleep 0.3; cliclick "dc:$2" >> steps.log 2>&1; step "double-clicked $1 at $2"; }
-          NEXT=775,457; BACK=634,513; LOOP=721,513; BLACKOUT=818,513; STOP=916,513; ADD=366,87; ROW3=220,304
+          NEXT=775,457; BACK=634,513; LOOP=721,513; BLACKOUT=818,513; STOP=916,513; ADD=366,87; ROW3=220,304; SEEK75=884,395
 
           build/VideoPlayer.app/Contents/MacOS/VideoPlayer > app.log 2>&1 &
           sleep 8
@@ -57,7 +57,8 @@ jobs:
           shot 01_opened
 
           step "KEYS"
-          key "key code 49";  sleep 1.5; shot 02_space_plays_red
+          key "key code 49";  sleep 0.7
+          click "seek bar at 75%" $SEEK75; sleep 0.4; shot 02_space_plays_red_then_seek_75
           sleep 3.5;                     shot 03_red_ended_into_loop
           key "key code 124"; sleep 1.5; shot 04_right_arrow_plays_blue
           sleep 3.5

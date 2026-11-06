@@ -107,8 +107,13 @@
   .clock .r { display: flex; justify-content: space-between; align-items: flex-end; }
   .clock .lab { font-size: 10px; color: var(--text2); }
   .clock .t { font: 600 24px var(--round); font-variant-numeric: tabular-nums; }
-  .bar { height: 5px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
-  .bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+  /* Seek bar: click or drag to jump within the playing video */
+  .seek { position: relative; height: 14px; display: flex; align-items: center; }
+  .bar { position: relative; width: 100%; height: 6px; border-radius: 3px; background: rgba(255,255,255,.12); transition: height .1s; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 3px; }
+  .knob { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #fff; box-shadow: 0 0 3px rgba(0,0,0,.6); display: none; }
+  .seek.can:hover .bar, .seek.dragging .bar { height: 8px; }
+  .seek.can:hover .knob, .seek.dragging .knob { display: block; }
 
   .err { font-size: 10px; color: var(--red); }
 
@@ -220,7 +225,7 @@
           <div><div class="lab">Elapsed</div><div class="t" id="elapsed">0:00</div></div>
           <div style="text-align:right"><div class="lab">Remaining</div><div class="t" id="remaining">-0:00</div></div>
         </div>
-        <div class="bar"><i id="progress"></i></div>
+        <div class="seek" id="seek" title="Click or drag to jump to a point in the video"><div class="bar"><i id="progress"></i></div><div class="knob" id="knob"></div></div>
       </div>
 
       <div class="err" id="err" style="display:none"></div>
@@ -562,18 +567,45 @@ function renderSide() {
 }
 function renderAll() { renderList(); renderSide(); }
 
-// Clock: 5 times a second, like the Swift ShowClock
+// Seek bar (mirrors SeekBar in ControlView.swift)
+let scrubbing = false, scrubTime = 0;
+const activeDuration = () => { const v = E.slots[E.active], cue = S.cues.find(c => c.id === E.playingId); return cue?.duration || v.duration || 0; };
+const canSeek = () => E.phase === "playing" && activeDuration() > 0;
+function seekTo(t, precise) {
+  if (!canSeek()) return;
+  const v = E.slots[E.active], dur = activeDuration();
+  t = Math.min(Math.max(0, t), Math.max(0, dur - .05));
+  if (!precise && v.fastSeek) v.fastSeek(t); else v.currentTime = t;
+  scrubTime = t;
+}
+const seekEl = $("seek");
+function seekFromEvent(e, precise) {
+  const r = seekEl.getBoundingClientRect();
+  const f = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1);
+  seekTo(f * activeDuration(), precise);
+}
+seekEl.addEventListener("mousedown", e => {
+  if (!canSeek() || e.button !== 0) return;
+  scrubbing = true; seekEl.classList.add("dragging"); seekFromEvent(e, false);
+  const mv = ev => seekFromEvent(ev, false);
+  const up = ev => { seekFromEvent(ev, true); scrubbing = false; seekEl.classList.remove("dragging"); removeEventListener("mousemove", mv); removeEventListener("mouseup", up); };
+  addEventListener("mousemove", mv); addEventListener("mouseup", up);
+});
+
+// Clock: 5 times a second, like the Swift ShowClock (20 while dragging the seek bar)
 setInterval(() => {
   let el = 0, dur = 0;
+  seekEl.classList.toggle("can", canSeek());
   if (E.phase === "playing") {
-    const v = E.slots[E.active], cue = S.cues.find(c => c.id === E.playingId);
-    el = v.currentTime || 0; dur = cue?.duration || v.duration || 0;
+    const v = E.slots[E.active];
+    el = scrubbing ? scrubTime : (v.currentTime || 0); dur = activeDuration();
   }
   $("elapsed").textContent = formatTime(el);
   $("remaining").textContent = "-" + formatTime(Math.max(0, dur - el));
   $("remaining").style.color = dur > 0 && dur - el < 10 ? "var(--orange)" : "";
-  $("progress").style.width = (dur > 0 ? Math.min(el / dur, 1) * 100 : 0) + "%";
-}, 200);
+  const pct = (dur > 0 ? Math.min(el / dur, 1) * 100 : 0) + "%";
+  $("progress").style.width = pct; $("knob").style.left = pct;
+}, 50);
 
 // ---------- Input ----------
 const fileIn = $("fileIn"), loopIn = $("loopIn");
