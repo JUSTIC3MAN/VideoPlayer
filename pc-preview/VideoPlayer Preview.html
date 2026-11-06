@@ -430,10 +430,11 @@ function go(i) {
   renderAll();
 }
 
-function showLoop() {
+// lift = true for the Loop button / L key; a video ending by itself keeps a blackout on
+function showLoop(lift = true) {
   const fade = Math.max(0, S.crossfade), wasBlack = E.blackout;
-  E.blackout = false;
-  if (E.phase === "loop") { if (wasBlack) render(.4); renderAll(); return; }
+  if (lift) E.blackout = false;
+  if (E.phase === "loop") { if (wasBlack && lift) render(.4); renderAll(); return; }
   if (!E.loopUrl) prepareLoop(E.playingId);
   loopV.play().catch(()=>{});
   const wasIdle = E.phase === "idle";
@@ -470,8 +471,8 @@ function stop() {
 
 function load(slot, cue) {
   const v = E.slots[slot];
-  v.onended = () => { if (slot === E.active && E.phase === "playing") showLoop(); };
-  v.onerror = () => { E.lastError = `Can't play "${cue.title}"`; if (slot === E.active && E.phase === "playing") showLoop(); renderAll(); };
+  v.onended = () => { if (slot === E.active && E.phase === "playing") showLoop(false); };
+  v.onerror = () => { E.lastError = `Can't play "${cue.title}"`; if (slot === E.active && E.phase === "playing") showLoop(false); renderAll(); };
   E.slotCue[slot] = cue.id; E.slotUrl[slot] = cue.url;
   v.src = cue.url; v.currentTime = 0; v.load();
 }
@@ -590,7 +591,7 @@ loopIn.onchange = () => {
 
 $("addBtn").onclick = chooseVideos; $("addBtn2").onclick = chooseVideos;
 $("removeBtn").onclick = () => removeIds(new Set(S.selection));
-$("nextBtn").onclick = next; $("backBtn").onclick = armPrevious; $("loopBtn").onclick = showLoop;
+$("nextBtn").onclick = next; $("backBtn").onclick = armPrevious; $("loopBtn").onclick = () => showLoop();
 $("blackBtn").onclick = toggleBlackout; $("stopBtn").onclick = stop;
 $("loopChoose").onclick = () => chooseLoop(null);
 $("loopClear").onclick = () => { S.defaultLoop = null; loopSettingChanged(); };
@@ -698,7 +699,7 @@ document.querySelectorAll(".menu > .title").forEach(t => {
   t.addEventListener("mousedown", e => { const m = t.parentElement, was = m.classList.contains("open"); closeMenus(); if (!was) m.classList.add("open"); e.stopPropagation(); });
   t.addEventListener("mouseenter", () => { if (document.querySelector(".menu.open")) { closeMenus(); t.parentElement.classList.add("open"); } });
 });
-const acts = { add: chooseVideos, next, back: armPrevious, loop: showLoop, black: toggleBlackout, output: toggleOutput, stop };
+const acts = { add: chooseVideos, next, back: armPrevious, loop: () => showLoop(), black: toggleBlackout, output: toggleOutput, stop };
 document.querySelectorAll(".mi[data-act]").forEach(mi => mi.addEventListener("click", () => { closeMenus(); acts[mi.dataset.act](); }));
 
 // Resizable split

@@ -269,13 +269,18 @@ final class PlaybackEngine: ObservableObject {
         }
     }
 
-    /// Shows the loop visual. Called automatically when a video ends, or with the Loop button.
+    /// The Loop button / L key: shows the loop visual (and lifts a blackout).
     func showLoop() {
+        enterLoop(liftBlackout: true)
+    }
+
+    /// Goes to the loop visual. When a video ends by itself, a blackout stays on until the operator lifts it.
+    private func enterLoop(liftBlackout: Bool) {
         let fade = max(0, setlist.crossfade)
         let wasBlack = blackout
-        blackout = false
+        if liftBlackout { blackout = false }
         if phase == .loop {
-            if wasBlack { render(0.4) }
+            if wasBlack && liftBlackout { render(0.4) }
             return
         }
         showLog("Loop visual: \(setlist.loopFor(cueID: playingCueID)?.name ?? "none chosen (black)")")
@@ -374,7 +379,7 @@ final class PlaybackEngine: ObservableObject {
                 guard status == .failed, let self else { return }
                 self.lastError = "Can't play \"\(title)\": \(item?.error?.localizedDescription ?? "unknown error")"
                 showLog(self.lastError ?? "")
-                if self.activeSlot == slot, self.phase == .playing { self.showLoop() }
+                if self.activeSlot == slot, self.phase == .playing { self.enterLoop(liftBlackout: false) }
             }
 
         slotPlayers[slot].replaceCurrentItem(with: item)
@@ -383,7 +388,7 @@ final class PlaybackEngine: ObservableObject {
     private func videoEnded(slot: Int) {
         guard slot == activeSlot, phase == .playing else { return }
         showLog("Video ended")
-        showLoop()
+        enterLoop(liftBlackout: false)
     }
 
     /// Loads the NEXT video into the free player so it starts instantly. Never touches a player on screen.

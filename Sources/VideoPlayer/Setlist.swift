@@ -82,7 +82,10 @@ final class Setlist: ObservableObject {
         panel.allowedContentTypes = Self.videoTypes
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
-        if panel.runModal() == .OK { add(urls: panel.urls) }
+        showLog("Add Videos: opening the file window")
+        let result = panel.runModal()
+        showLog("Add Videos: \(result == .OK ? "\(panel.urls.count) file(s) chosen" : "cancelled")")
+        if result == .OK { add(urls: panel.urls) }
     }
 
     func chooseLoop(for cueID: UUID?) {

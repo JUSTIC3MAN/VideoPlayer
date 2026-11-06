@@ -66,16 +66,24 @@ jobs:
           click "Stop" $STOP;           sleep 1.5; shot 05_click_stop_black
           click "NEXT" $NEXT;           sleep 1.5; shot 06_click_next_plays_red
           sleep 3.5;                               shot 07_red_ended_into_loop
-          click "NEXT" $NEXT;           sleep 1.5; shot 08_click_next_plays_blue
-          click "Blackout" $BLACKOUT;   sleep 1;   shot 09_click_blackout_on
-          click "Blackout" $BLACKOUT;   sleep 1;   shot 10_click_blackout_off
-          click "Loop" $LOOP;           sleep 1.5; shot 11_click_loop
+          click "NEXT" $NEXT;           sleep 0.8
+          click "Blackout" $BLACKOUT;   sleep 1;   shot 08_next_blue_then_blackout_on
+          sleep 3.5;                               shot 09_blue_ended_screen_stays_black
+          click "Blackout" $BLACKOUT;   sleep 1;   shot 10_blackout_off_shows_loop
+          click "Loop" $LOOP;           sleep 1;   shot 11_click_loop
           click "Back" $BACK;           sleep 1;   shot 12_click_back_next_moves_up
           dclick "row 3 (green)" $ROW3; sleep 1.5; shot 13_doubleclick_row3_plays_green
-          click "Add Videos" $ADD;      sleep 2;   shot 14_click_add_videos_panel
-          key "key code 53"; sleep 1
-          key "keystroke \"f\""; sleep 2;          shot 15_key_f_output_fullscreen
-          key "key code 53"; sleep 1;              shot 16_esc_output_hidden
+
+          step "ADD VIDEOS (file window, pick a video by its path)"
+          click "Add Videos" $ADD;      sleep 3;   shot 14_add_videos_after_3s
+          sleep 5;                                 shot 15_add_videos_after_8s
+          key "keystroke \"g\" using {command down, shift down}"; sleep 2
+          key "keystroke \"$PWD/.github/test-media/song_blue.mp4\""; sleep 1; shot 16_go_to_file
+          key "key code 36"; sleep 2;              shot 17_file_selected
+          key "key code 36"; sleep 3;              shot 18_after_open_setlist_has_4
+
+          key "keystroke \"f\""; sleep 2;          shot 19_key_f_output_fullscreen
+          key "key code 53"; sleep 1;              shot 20_esc_output_hidden
 
           pkill -x VideoPlayer
           echo "--- app log" >> steps.log; cat app.log >> steps.log
