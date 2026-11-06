@@ -25,15 +25,25 @@ It's built for the screen behind the band. There's a control window on the lapto
 | F | Show / hide the output |
 | Esc | Hide the output |
 
-## Build it on the Mac
+## Install on a Mac
 
-You need macOS 13 Ventura or newer. It works on both Intel and Apple Silicon Macs.
+Open **Terminal** and paste this one line:
 
-1. Install Apple's free developer tools (one time): `xcode-select --install`
-2. In Terminal, go to this folder and run: `./build.sh`
-3. Open `build/VideoPlayer.app`. To copy it into Applications as well, run `./build.sh install`.
+```
+curl -fsSL https://raw.githubusercontent.com/JUSTIC3MAN/VideoPlayer/main/install.sh | bash
+```
 
-If macOS says the script isn't allowed to run, use `chmod +x build.sh` first.
+It downloads the latest VideoPlayer, puts it in Applications and opens it. It works on Intel and Apple Silicon Macs with macOS 13 Ventura or newer, and nothing else needs installing.
+
+**Or download it by hand:** get `VideoPlayer.zip` from the [latest release](https://github.com/JUSTIC3MAN/VideoPlayer/releases/latest), unzip it and drag `VideoPlayer.app` into Applications. The first time you open it, macOS blocks it because it isn't from the App Store. Go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**. This is only needed once. The Terminal line above skips this step.
+
+## Updates
+
+- VideoPlayer checks GitHub a few seconds after it opens. If there's a newer version, it asks whether to update; click **Update and Restart**. You can also choose **VideoPlayer → Check for Updates…** at any time.
+- Or run the install line again; it replaces the old version.
+- Your setlist and settings are kept either way.
+
+Each time the code on GitHub changes, GitHub builds a new version on one of its Macs and publishes it as the latest release (see the Actions tab), so updates show up by themselves.
 
 ## Show setup tips
 
@@ -57,7 +67,10 @@ If macOS says the script isn't allowed to run, use `chmod +x build.sh` first.
 ```
 Package.swift                      Swift package (macOS 13+)
 build.sh                           builds VideoPlayer.app
+install.sh                         one-line install / update
+.github/workflows/release.yml      GitHub builds the app and publishes each release
 Sources/VideoPlayer/
+  Updater.swift                    Check for Updates
   VideoPlayerApp.swift                app, menus, keyboard shortcuts
   ControlView.swift                control window (setlist, preview, transport, settings)
   PlaybackEngine.swift             the two video players, the loop, fades, Next logic
@@ -67,14 +80,15 @@ Sources/VideoPlayer/
   Models.swift                     data types
 ```
 
-## Get it on the Mac
+## Build it yourself (optional)
 
-Either download the ZIP from GitHub (green **Code** button → **Download ZIP**) and unzip it, or:
+You only need this if you're changing the code:
 
 ```
+xcode-select --install        # Apple's free build tools, once
 git clone https://github.com/JUSTIC3MAN/VideoPlayer.git
 cd VideoPlayer
-./build.sh
+./build.sh                    # makes build/VideoPlayer.app   (./build.sh install also copies it to Applications)
 ```
 
 ## PC preview

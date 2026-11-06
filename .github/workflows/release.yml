@@ -1,0 +1,32 @@
+# Builds VideoPlayer.app on a GitHub Mac every time main changes, and publishes it as the latest release.
+# The install command and the app's own updater download from that release.
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (Intel + Apple Silicon)
+        run: UNIVERSAL=1 VERSION="1.0.${{ github.run_number }}" BUILD="${{ github.run_number }}" ./build.sh
+
+      - name: Zip the app
+        run: ditto -c -k --keepParent build/VideoPlayer.app VideoPlayer.zip
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v1.0.${{ github.run_number }}" VideoPlayer.zip \
+            --title "VideoPlayer 1.0.${{ github.run_number }}" \
+            --notes "Built from ${{ github.sha }}" \
+            --latest

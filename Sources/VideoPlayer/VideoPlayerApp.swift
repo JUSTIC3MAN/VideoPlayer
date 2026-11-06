@@ -15,6 +15,9 @@ struct VideoPlayerApp: App {
         }
         .defaultSize(width: 1320, height: 820)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { appDelegate.updater.check(userInitiated: true) }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("Add Videos…") { appDelegate.setlist.chooseVideos() }
                     .keyboardShortcut("o", modifiers: [.command])
@@ -44,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let setlist = Setlist()
     lazy var engine = PlaybackEngine(setlist: setlist)
     lazy var output = OutputController(engine: engine)
+    let updater = Updater()
 
     private var keyMonitor: Any?
     private var activity: NSObjectProtocol?
@@ -56,6 +60,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         activity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .idleDisplaySleepDisabled, .latencyCritical],
             reason: "VideoPlayer show playback")
+
+        // Look for a newer version on GitHub a few seconds after launch (only speaks up if there is one).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.updater.check(userInitiated: false)
+        }
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }

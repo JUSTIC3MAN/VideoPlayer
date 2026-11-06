@@ -1,13 +1,15 @@
 #!/bin/bash
 # Builds VideoPlayer.app with Apple's free Command Line Tools (no Xcode project needed).
 #
-#   ./build.sh            -> build/VideoPlayer.app
+#   ./build.sh            -> build/VideoPlayer.app (for this Mac)
 #   ./build.sh install    -> also copies it to /Applications
+#   UNIVERSAL=1 ./build.sh  -> one app for both Intel and Apple Silicon (needs full Xcode; used by GitHub)
 set -euo pipefail
 cd "$(dirname "$0")"
 
 APP="VideoPlayer"
-VERSION="1.0"
+VERSION="${VERSION:-1.0}"
+BUILD="${BUILD:-0}"          # GitHub sets this; 0 = built by hand
 BUNDLE_ID="com.justiceman.videoplayer"
 
 if ! command -v swift >/dev/null 2>&1; then
@@ -16,9 +18,16 @@ if ! command -v swift >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Building $APP (release, $(uname -m))..."
-swift build -c release
-BIN="$(swift build -c release --show-bin-path)/$APP"
+if [[ "${UNIVERSAL:-0}" == "1" ]]; then
+  ARCH_FLAGS=(--arch arm64 --arch x86_64)
+  echo "Building $APP $VERSION (Intel + Apple Silicon)..."
+else
+  ARCH_FLAGS=()
+  echo "Building $APP $VERSION ($(uname -m))..."
+fi
+# The ${a[@]+...} form keeps macOS's bash 3.2 happy when the list is empty.
+swift build -c release ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"}
+BIN="$(swift build -c release ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --show-bin-path)/$APP"
 
 OUT="build/$APP.app"
 rm -rf "$OUT"
@@ -37,7 +46,7 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key>           <string>$APP</string>
     <key>CFBundlePackageType</key>           <string>APPL</string>
     <key>CFBundleShortVersionString</key>    <string>$VERSION</string>
-    <key>CFBundleVersion</key>               <string>$VERSION</string>
+    <key>CFBundleVersion</key>               <string>$BUILD</string>
     <key>LSMinimumSystemVersion</key>        <string>13.0</string>
     <key>LSApplicationCategoryType</key>     <string>public.app-category.video</string>
     <key>NSHighResolutionCapable</key>       <true/>
