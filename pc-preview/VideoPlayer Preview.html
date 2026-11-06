@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VideoPlayer — PC preview</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* macOS dark appearance, sized like the SwiftUI app (13 px body, 10 px captions) */
+  :root {
+    --win: #1e1e1e;
+    --pane: #232323;
+    --side: #262626;
+    --row-alt: rgba(255,255,255,.035);
+    --sep: rgba(255,255,255,.10);
+    --text: #ffffffe6;
+    --text2: rgba(235,235,245,.55);
+    --accent: #0a84ff;
+    --green: #30d158;
+    --orange: #ff9f0a;
+    --red: #ff453a;
+    --gray: #8e8e93;
+    --btn: #48484a;
+    --btn-hi: #57575a;
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --round: "SF Pro Rounded", ui-rounded, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0b0b0c; color: var(--text); font: 13px/1.3 var(--font); -webkit-font-smoothing: antialiased; overflow: hidden; user-select: none; }
+  button, select, input { font: inherit; color: inherit; }
+
+  /* Menu bar + window chrome */
+  .menubar { height: 24px; display: flex; align-items: center; gap: 2px; padding: 0 10px; background: rgba(40,40,42,.95); border-bottom: 1px solid #000; font-size: 13px; }
+  .menubar .apple { width: 14px; height: 14px; margin-right: 10px; opacity: .9; }
+  .menu { position: relative; }
+  .menu > .title { padding: 2px 9px; border-radius: 4px; cursor: default; }
+  .menu > .title.app { font-weight: 700; }
+  .menu.open > .title { background: rgba(255,255,255,.18); }
+  .menu .drop { display: none; position: absolute; top: 22px; left: 0; min-width: 260px; padding: 5px; border-radius: 7px; background: rgba(42,42,44,.98); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 10px 30px rgba(0,0,0,.5); z-index: 50; }
+  .menu.open .drop { display: block; }
+  .mi { display: flex; justify-content: space-between; gap: 24px; padding: 3px 10px; border-radius: 4px; white-space: nowrap; }
+  .mi:hover:not(.off) { background: var(--accent); }
+  .mi.off { color: rgba(255,255,255,.3); }
+  .mi .k { color: var(--text2); }
+  .mi:hover:not(.off) .k { color: #fff; }
+  .msep { height: 1px; background: var(--sep); margin: 5px 6px; }
+  .menubar .note { margin-left: auto; color: var(--text2); font-size: 11px; }
+
+  .window { position: absolute; top: 24px; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; background: var(--win); }
+  .titlebar { height: 28px; flex: none; display: flex; align-items: center; justify-content: center; position: relative; background: #2b2b2d; border-bottom: 1px solid #000; font-weight: 600; color: rgba(255,255,255,.75); }
+  .lights { position: absolute; left: 12px; display: flex; gap: 8px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .lights i:nth-child(1) { background: #ff5f57; } .lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+
+  .split { flex: 1; display: flex; min-height: 0; }
+  .divider { width: 1px; background: #000; position: relative; cursor: col-resize; flex: none; }
+  .divider::after { content: ""; position: absolute; inset: 0 -4px; }
+
+  /* Setlist pane */
+  .setlist { flex: 1; min-width: 540px; display: flex; flex-direction: column; background: var(--pane); }
+  .head { display: flex; align-items: center; gap: 10px; padding: 12px; }
+  .head h2 { margin: 0; font-size: 17px; font-weight: 700; }
+  .head .count { color: var(--text2); }
+  .spacer { flex: 1; }
+  .hr { height: 1px; background: var(--sep); flex: none; }
+
+  .btn { background: var(--btn); border: 0; border-radius: 6px; padding: 3px 10px; box-shadow: 0 0 0 .5px rgba(0,0,0,.6), inset 0 .5px 0 rgba(255,255,255,.12); cursor: default; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .btn:hover { background: var(--btn-hi); }
+  .btn:active { filter: brightness(1.25); }
+  .btn:disabled { opacity: .4; }
+  .btn.red { color: var(--red); }
+  .btn .ic { font-size: 12px; }
+
+  .list { flex: 1; overflow-y: auto; position: relative; padding: 4px 8px; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 4px 8px; border-radius: 6px; }
+  .row:nth-child(even) { background: var(--row-alt); }
+  .row.sel { background: var(--accent) !important; }
+  .row.sel .sub, .row.sel .num { color: rgba(255,255,255,.85); }
+  .row.dragging { opacity: .4; }
+  .num { width: 32px; text-align: right; font: 15px var(--round); font-variant-numeric: tabular-nums; color: var(--text2); flex: none; }
+  .thumb { width: 112px; height: 63px; border-radius: 5px; background: #000 center/contain no-repeat; flex: none; display: flex; align-items: center; justify-content: center; color: var(--text2); }
+  .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .ttl { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub { font-size: 10px; color: var(--text2); display: flex; gap: 8px; white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; }
+  .warn { font-size: 10px; color: var(--red); }
+  .badge { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 999px; color: #fff; flex: none; }
+  .insert-line { position: absolute; left: 10px; right: 10px; height: 2px; background: var(--accent); border-radius: 1px; pointer-events: none; display: none; }
+  .insert-line::before { content: ""; position: absolute; left: -4px; top: -3px; width: 6px; height: 6px; border: 2px solid var(--accent); border-radius: 50%; background: var(--pane); }
+
+  .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+  .empty.target { background: rgba(10,132,255,.12); }
+  .empty .big { font-size: 15px; }
+  .foot { font-size: 10px; color: var(--text2); padding: 8px; text-align: center; }
+
+  /* Side panel */
+  .side { width: 400px; min-width: 360px; max-width: 480px; flex: none; background: var(--side); overflow-y: auto; }
+  .side-in { padding: 14px; display: flex; flex-direction: column; gap: 16px; }
+
+  .stage { position: relative; aspect-ratio: 16/9; background: #000; border-radius: 8px; overflow: hidden; }
+  .stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; background: transparent; }
+  .stage.fill video { object-fit: cover; }
+  .stage .black { position: absolute; inset: 0; background: #000; opacity: 1; z-index: 10; }
+  .stage .tag { position: absolute; top: 8px; left: 8px; z-index: 20; }
+  .stage:fullscreen { border-radius: 0; cursor: none; }
+  .stage:fullscreen .tag { display: none; }
+
+  .clock { display: flex; flex-direction: column; gap: 6px; }
+  .clock .r { display: flex; justify-content: space-between; align-items: flex-end; }
+  .clock .lab { font-size: 10px; color: var(--text2); }
+  .clock .t { font: 600 24px var(--round); font-variant-numeric: tabular-nums; }
+  .bar { height: 5px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+
+  .err { font-size: 10px; color: var(--red); }
+
+  .next { width: 100%; min-height: 60px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; box-shadow: inset 0 .5px 0 rgba(255,255,255,.25); cursor: default; }
+  .next:hover { filter: brightness(1.08); }
+  .next:active { filter: brightness(1.2); }
+  .next:disabled { background: #3a3a3c; color: rgba(255,255,255,.35); }
+  .next b { font-size: 26px; font-weight: 900; letter-spacing: .5px; line-height: 1; }
+  .next span { font-size: 10px; max-width: 90%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .transport { display: flex; flex-direction: column; gap: 8px; }
+  .transport .row2 { display: flex; justify-content: center; gap: 8px; }
+
+  .group > .gl { margin: 0 0 6px 2px; }
+  .group > .gb { background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.07); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .loopinfo { display: flex; gap: 10px; align-items: center; }
+  .loopinfo .thumb { width: 96px; height: 54px; }
+  .cap { font-size: 10px; color: var(--text2); }
+  .hstack { display: flex; gap: 8px; align-items: center; }
+
+  .field { display: flex; align-items: center; gap: 8px; }
+  .field select { flex: 1; min-width: 0; background: var(--btn); border: 0; border-radius: 6px; padding: 3px 8px; box-shadow: 0 0 0 .5px rgba(0,0,0,.6), inset 0 .5px 0 rgba(255,255,255,.12); }
+  .seg { display: flex; background: rgba(255,255,255,.08); border-radius: 7px; padding: 2px; }
+  .seg button { flex: 1; border: 0; background: transparent; border-radius: 5px; padding: 2px 8px; cursor: default; }
+  .seg button.on { background: var(--btn-hi); box-shadow: 0 1px 2px rgba(0,0,0,.4); }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+  .mono { font-variant-numeric: tabular-nums; width: 44px; text-align: right; }
+  label.chk { display: flex; gap: 6px; align-items: center; }
+  label.chk input { accent-color: var(--accent); width: 14px; height: 14px; margin: 0; }
+
+  .keys .kt { font-size: 10px; font-weight: 700; color: var(--text2); margin-bottom: 4px; }
+  .keys .kr { display: flex; font-size: 10px; padding: 1px 0; }
+  .keys .kr span:first-child { width: 140px; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+  .keys .kr span:last-child { color: var(--text2); }
+
+  /* Right-click menu */
+  .ctx { position: fixed; display: none; min-width: 270px; padding: 5px; border-radius: 7px; background: rgba(42,42,44,.98); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 10px 30px rgba(0,0,0,.5); z-index: 100; }
+  ::-webkit-scrollbar { width: 10px; } ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 5px; border: 3px solid transparent; background-clip: padding-box; }
+</style>
+</head>
+<body>
+
+<!-- macOS menu bar (File and Show are the app's own menus) -->
+<div class="menubar">
+  <svg class="apple" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.4 2-3.5 2-3.6-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.9-.9-3.1-.8C6.8 7.3 5.3 8.2 4.5 9.6c-1.7 2.9-.4 7.2 1.2 9.5.8 1.1 1.7 2.4 3 2.4 1.2 0 1.6-.8 3.1-.8s1.8.8 3.1.8c1.3 0 2.1-1.2 2.9-2.3.9-1.3 1.3-2.6 1.3-2.7 0 0-2.6-1-2.7-3.9zM14.1 5.6c.7-.8 1.1-1.9 1-3-1 0-2.1.6-2.8 1.4-.6.7-1.2 1.8-1 2.9 1.1.1 2.1-.5 2.8-1.3z"/></svg>
+  <div class="menu"><div class="title app">VideoPlayer</div>
+    <div class="drop"><div class="mi off">About VideoPlayer</div><div class="msep"></div><div class="mi off">Quit VideoPlayer <span class="k">⌘Q</span></div></div></div>
+  <div class="menu"><div class="title">File</div>
+    <div class="drop">
+      <div class="mi" data-act="add">Add Videos… <span class="k">⌘O</span></div>
+      <div class="msep"></div>
+      <div class="mi off" title="Works in the Mac app">Open Setlist… <span class="k">⇧⌘O</span></div>
+      <div class="mi off" title="Works in the Mac app">Save Setlist As… <span class="k">⇧⌘S</span></div>
+    </div></div>
+  <div class="menu"><div class="title">Edit</div><div class="drop"><div class="mi off">Undo <span class="k">⌘Z</span></div></div></div>
+  <div class="menu"><div class="title">Show</div>
+    <div class="drop">
+      <div class="mi" data-act="next">Next  (Space, →, Page Down)</div>
+      <div class="mi" data-act="back">Back One  (←, Page Up)</div>
+      <div class="mi" data-act="loop">Loop Visual  (L)</div>
+      <div class="mi" data-act="black">Blackout  (B)</div>
+      <div class="msep"></div>
+      <div class="mi" data-act="output">Show / Hide Output  (F, Esc)</div>
+      <div class="msep"></div>
+      <div class="mi" data-act="stop">Stop Show</div>
+    </div></div>
+  <div class="menu"><div class="title">Window</div><div class="drop"><div class="mi off">Minimize <span class="k">⌘M</span></div></div></div>
+  <div class="menu"><div class="title">Help</div><div class="drop"><div class="mi off">VideoPlayer Help</div></div></div>
+  <div class="note">PC preview of the Mac app: same layout and behavior</div>
+</div>
+
+<div class="window">
+  <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div>VideoPlayer</div>
+  <div class="split">
+
+    <!-- Setlist -->
+    <div class="setlist" id="setlistPane">
+      <div class="head">
+        <h2>Setlist</h2>
+        <span class="count" id="count">0 videos · 0:00</span>
+        <span class="spacer"></span>
+        <button class="btn" id="addBtn"><span class="ic">＋</span> Add Videos</button>
+        <button class="btn" id="removeBtn" disabled><span class="ic">−</span> Remove</button>
+      </div>
+      <div class="hr"></div>
+      <div class="empty" id="empty">
+        <svg width="52" height="44" viewBox="0 0 52 44" fill="none" stroke="rgba(235,235,245,.55)" stroke-width="2.5"><rect x="9" y="9" width="40" height="32" rx="4"/><path d="M5 35V7a4 4 0 0 1 4-4h34"/><path d="M17 9v32M41 9v32M9 17h8M9 25h8M9 33h8M41 17h8M41 25h8M41 33h8"/></svg>
+        <div class="big">Drop videos here</div>
+        <button class="btn" id="addBtn2">Add Videos…</button>
+      </div>
+      <div class="list" id="list" style="display:none"><div class="insert-line" id="insertLine"></div></div>
+      <div class="hr"></div>
+      <div class="foot">Drag rows to reorder · drop videos from Finder · double-click plays a video now · right-click for its own loop</div>
+    </div>
+
+    <div class="divider" id="divider"></div>
+
+    <!-- Side panel -->
+    <div class="side" id="side"><div class="side-in">
+      <div class="stage" id="stage">
+        <video id="loopV" muted loop playsinline preload="auto"></video>
+        <video id="v0" playsinline preload="auto"></video>
+        <video id="v1" playsinline preload="auto"></video>
+        <div class="black" id="black"></div>
+        <div class="tag"><span class="badge" id="phaseTag" style="background:var(--gray)">STANDBY</span></div>
+      </div>
+
+      <div class="clock">
+        <div class="r">
+          <div><div class="lab">Elapsed</div><div class="t" id="elapsed">0:00</div></div>
+          <div style="text-align:right"><div class="lab">Remaining</div><div class="t" id="remaining">-0:00</div></div>
+        </div>
+        <div class="bar"><i id="progress"></i></div>
+      </div>
+
+      <div class="err" id="err" style="display:none"></div>
+
+      <div class="transport">
+        <button class="next" id="nextBtn"><b>NEXT</b><span id="nextTitle">End of setlist</span></button>
+        <div class="row2">
+          <button class="btn" id="backBtn">⏮ Back</button>
+          <button class="btn" id="loopBtn">↻ Loop</button>
+          <button class="btn" id="blackBtn">☾ Blackout</button>
+          <button class="btn red" id="stopBtn">■ Stop</button>
+        </div>
+      </div>
+
+      <div class="group"><div class="gl">Loop visual</div><div class="gb">
+        <div class="loopinfo">
+          <div class="thumb" id="loopThumb">▶︎</div>
+          <div><div id="loopName">No loop chosen (black)</div><div class="cap">Plays after each video until you press Next.</div></div>
+        </div>
+        <div class="hstack"><button class="btn" id="loopChoose">Choose…</button><button class="btn" id="loopClear" style="display:none">Clear</button></div>
+        <div class="cap">A video can have its own loop: right-click it in the setlist.</div>
+      </div></div>
+
+      <div class="group"><div class="gl">Output</div><div class="gb">
+        <div class="field"><span>Screen:</span><select id="screenSel" title="On the Mac this lists your displays"><option>This display</option></select></div>
+        <div><button class="btn" id="outBtn">Show Output Full Screen (F)</button></div>
+        <div class="field"><span>Picture:</span><div class="seg" style="flex:1"><button id="fitBtn" class="on">Fit</button><button id="fillBtn">Fill (crops edges)</button></div></div>
+        <div class="field"><span>Crossfade</span><input type="range" id="xfade" min="0" max="3" step="0.1" value="0.5"><span class="mono" id="xfadeVal">0.5 s</span></div>
+        <label class="chk"><input type="checkbox" id="audioChk" checked> Play the videos' own sound</label>
+      </div></div>
+
+      <div class="keys">
+        <div class="kt">Keys</div>
+        <div class="kr"><span>Space  →  Page Down</span><span>Next video</span></div>
+        <div class="kr"><span>←  Page Up</span><span>Move NEXT back one (doesn't play)</span></div>
+        <div class="kr"><span>L</span><span>Loop visual now</span></div>
+        <div class="kr"><span>B</span><span>Blackout on / off</span></div>
+        <div class="kr"><span>F</span><span>Show / hide output</span></div>
+        <div class="kr"><span>Esc</span><span>Hide output</span></div>
+      </div>
+    </div></div>
+  </div>
+</div>
+
+<div class="ctx" id="ctx"></div>
+<input type="file" id="fileIn" accept="video/*,.mov,.mp4,.m4v" multiple hidden>
+<input type="file" id="loopIn" accept="video/*,.mov,.mp4,.m4v" hidden>
+
+<script>
+"use strict";
+// ---------- State (mirrors Setlist.swift) ----------
+const S = {
+  cues: [],            // {id, title, url, duration, thumb, loop: {name, url, thumb}|null}
+  defaultLoop: null,   // {name, url, thumb}
+  crossfade: 0.5,
+  fill: false,
+  videoAudio: true,
+  selection: new Set(),
+};
+let anchorId = null;   // for shift-click ranges
+let uid = 1;
+const $ = id => document.getElementById(id);
+
+function formatTime(s) {
+  if (!isFinite(s) || s <= 0) return "0:00";
+  const t = Math.floor(s);
+  if (t >= 3600) return `${Math.floor(t/3600)}:${String(Math.floor(t%3600/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}`;
+  return `${Math.floor(t/60)}:${String(t%60).padStart(2,"0")}`;
+}
+const isVideo = f => f.type.startsWith("video/") || /\.(mp4|mov|m4v|webm|mkv)$/i.test(f.name);
+const nameOf = f => f.name.replace(/\.[^.]+$/, "");
+
+// ---------- Thumbnails + durations (one at a time, like a background task) ----------
+const probeQueue = [];
+let probing = false;
+function probe(url, done) { probeQueue.push({url, done}); if (!probing) nextProbe(); }
+function nextProbe() {
+  const job = probeQueue.shift();
+  if (!job) { probing = false; return; }
+  probing = true;
+  const v = document.createElement("video");
+  v.muted = true; v.preload = "auto"; v.src = job.url;
+  let finished = false;
+  const finish = (dur, thumb) => { if (finished) return; finished = true; v.removeAttribute("src"); v.load(); job.done(dur, thumb); nextProbe(); };
+  v.addEventListener("loadedmetadata", () => {
+    const d = v.duration;
+    v.currentTime = isFinite(d) && d > 2 ? Math.min(d * .25, 10) : 0;
+  });
+  v.addEventListener("seeked", () => {
+    const c = document.createElement("canvas");
+    const w = 320, h = Math.round(320 * (v.videoHeight || 9) / (v.videoWidth || 16));
+    c.width = w; c.height = h;
+    try { c.getContext("2d").drawImage(v, 0, 0, w, h); finish(v.duration, c.toDataURL("image/jpeg", .8)); }
+    catch { finish(v.duration, null); }
+  });
+  v.addEventListener("error", () => finish(0, null));
+  setTimeout(() => finish(v.duration || 0, null), 8000);
+}
+
+// ---------- Setlist editing ----------
+function addFiles(files, index) {
+  const vids = [...files].filter(isVideo);
+  if (!vids.length) return;
+  const at = Math.min(Math.max(index ?? S.cues.length, 0), S.cues.length);
+  const fresh = vids.map(f => ({ id: uid++, title: nameOf(f), url: URL.createObjectURL(f), duration: 0, thumb: null, loop: null }));
+  S.cues.splice(at, 0, ...fresh);
+  for (const c of fresh) probe(c.url, (d, t) => { c.duration = isFinite(d) ? d : 0; c.thumb = t; renderAll(); });
+  cuesChanged();
+}
+function removeIds(ids) {
+  S.cues = S.cues.filter(c => !ids.has(c.id));
+  ids.forEach(id => S.selection.delete(id));
+  cuesChanged();
+}
+function moveIds(ids, toIndex) {       // like Array.move(fromOffsets:toOffset:)
+  const moving = S.cues.filter(c => ids.has(c.id));
+  let before = S.cues.slice(0, toIndex).filter(c => !ids.has(c.id)).length;
+  const rest = S.cues.filter(c => !ids.has(c.id));
+  rest.splice(before, 0, ...moving);
+  S.cues = rest;
+  cuesChanged();
+}
+function makeLoopRef(file) {
+  const ref = { name: nameOf(file), url: URL.createObjectURL(file), thumb: null };
+  probe(ref.url, (d, t) => { ref.thumb = t; renderAll(); });
+  return ref;
+}
+const loopFor = id => (S.cues.find(c => c.id === id)?.loop) || S.defaultLoop;
+
+// ---------- Engine (mirrors PlaybackEngine.swift) ----------
+const E = {
+  phase: "idle", playingId: null, armedId: null, armedByUser: false, blackout: false, lastError: null,
+  slots: [$("v0"), $("v1")], slotCue: [null, null], slotUrl: [null, null],
+  active: 0, visual: { alpha: [0, 0], top: 0, loopAlpha: 0 },
+  loopUrl: null, fadeGen: 0, fadeInFlight: false, lastGo: 0, ramps: [null, null],
+};
+const loopV = $("loopV");
+const idx = id => S.cues.findIndex(c => c.id === id);
+const cueAfter = id => { const i = idx(id); if (i < 0) return S.cues[0]?.id ?? null; return S.cues[i + 1]?.id ?? null; };
+const automaticNext = () => E.playingId == null ? (S.cues[0]?.id ?? null) : cueAfter(E.playingId);
+
+function setArmed(id) { const changed = id !== E.armedId; E.armedId = id; if (changed) prepareArmed(); }
+
+function cuesChanged() {
+  if (E.armedByUser && idx(E.armedId) >= 0) prepareArmed();
+  else { E.armedByUser = false; const n = automaticNext(); if (n !== E.armedId) setArmed(n); else prepareArmed(); }
+  if (E.phase === "playing" && !E.fadeInFlight) prepareLoop(E.playingId);
+  renderAll();
+}
+function loopSettingChanged() {
+  if (E.phase === "loop") { prepareLoop(E.playingId); loopV.play().catch(()=>{}); }
+  else if (E.phase === "playing") { if (!E.fadeInFlight) prepareLoop(E.playingId); }
+  else prepareLoop(null);
+  renderAll();
+}
+
+function render(duration) {
+  const st = $("stage"), v = E.visual;
+  E.slots[v.top].style.zIndex = 2; E.slots[1 - v.top].style.zIndex = 1;
+  loopV.style.zIndex = 0;
+  loopV.style.transition = "none"; loopV.style.opacity = v.loopAlpha;
+  const tr = duration > 0 ? `opacity ${duration}s ease-in-out` : "none";
+  const black = E.blackout || E.phase === "idle";
+  for (const el of [E.slots[0], E.slots[1], $("black")]) el.style.transition = tr;
+  void st.offsetWidth;   // apply "no transition" before changing values
+  E.slots[0].style.opacity = v.alpha[0];
+  E.slots[1].style.opacity = v.alpha[1];
+  $("black").style.opacity = black ? 1 : 0;
+}
+
+function next() {
+  const lockout = Math.max(.35, Math.min(S.crossfade, 1)) * 1000;
+  if (performance.now() - E.lastGo <= lockout) return;
+  const i = idx(E.armedId);
+  if (i < 0) return;
+  go(i);
+}
+function armPrevious() {
+  if (!S.cues.length) return;
+  const i = idx(E.armedId) < 0 ? S.cues.length : idx(E.armedId);
+  E.armedByUser = true; setArmed(S.cues[Math.max(0, i - 1)].id); renderAll();
+}
+function arm(id) { E.armedByUser = true; setArmed(id); renderAll(); }
+function playNow(id) { const i = idx(id); if (i >= 0) go(i); }
+
+function go(i) {
+  const cue = S.cues[i]; if (!cue) return;
+  const fade = Math.max(0, S.crossfade), target = 1 - E.active, old = E.active, wasPlaying = E.phase === "playing";
+  E.lastGo = performance.now(); E.lastError = null; E.blackout = false;
+  if (E.slotCue[target] !== cue.id || E.slotUrl[target] !== cue.url) load(target, cue);
+  else if (E.slots[target].currentTime > .01) E.slots[target].currentTime = 0;
+  E.active = target; E.phase = "playing"; E.playingId = cue.id;
+  E.armedByUser = false; setArmed(cueAfter(cue.id));
+  const p = E.slots[target];
+  p.muted = !S.videoAudio;
+  if (wasPlaying && fade > 0) { p.volume = 0; ramp(target, 1, fade); ramp(old, 0, fade); }
+  else { cancelRamp(target); p.volume = 1; }
+  p.play().catch(e => { E.lastError = `Can't play "${cue.title}": ${e.message}`; renderAll(); });
+  E.visual.top = target; E.visual.alpha[target] = 1; render(fade);
+  E.fadeInFlight = true; const gen = ++E.fadeGen;
+  setTimeout(() => {
+    if (gen !== E.fadeGen) return;
+    E.fadeInFlight = false; E.visual.alpha[old] = 0; E.visual.loopAlpha = 0; render(0);
+    cancelRamp(old); E.slots[old].pause(); E.slots[old].volume = 1;
+    loopV.pause(); prepareLoop(cue.id); prepareArmed();
+  }, (fade + .05) * 1000);
+  renderAll();
+}
+
+function showLoop() {
+  const fade = Math.max(0, S.crossfade), wasBlack = E.blackout;
+  E.blackout = false;
+  if (E.phase === "loop") { if (wasBlack) render(.4); renderAll(); return; }
+  if (!E.loopUrl) prepareLoop(E.playingId);
+  loopV.play().catch(()=>{});
+  const wasIdle = E.phase === "idle";
+  E.phase = "loop"; E.visual.loopAlpha = 1; E.visual.alpha = [0, 0];
+  render(wasIdle ? Math.max(fade, .4) : fade);
+  ramp(E.active, 0, fade);
+  E.fadeInFlight = true; const gen = ++E.fadeGen;
+  setTimeout(() => {
+    if (gen !== E.fadeGen) return;
+    E.fadeInFlight = false;
+    E.slots.forEach((p, i) => { cancelRamp(i); p.pause(); p.volume = 1; });
+    prepareArmed();
+  }, (fade + .05) * 1000);
+  renderAll();
+}
+
+function toggleBlackout() { E.blackout = !E.blackout; render(.4); renderAll(); }
+
+function stop() {
+  E.phase = "idle"; E.blackout = false; E.playingId = null; render(.5);
+  ramp(0, 0, .5); ramp(1, 0, .5);
+  E.fadeInFlight = true; const gen = ++E.fadeGen;
+  setTimeout(() => {
+    if (gen !== E.fadeGen) return;
+    E.fadeInFlight = false;
+    E.slots.forEach((p, i) => { cancelRamp(i); p.pause(); p.volume = 1; });
+    loopV.pause(); E.visual.alpha = [0, 0]; E.visual.loopAlpha = 0; render(0);
+    prepareLoop(null); E.armedByUser = false;
+    if (E.armedId === (S.cues[0]?.id ?? null)) prepareArmed(); else setArmed(S.cues[0]?.id ?? null);
+    renderAll();
+  }, 550);
+  renderAll();
+}
+
+function load(slot, cue) {
+  const v = E.slots[slot];
+  v.onended = () => { if (slot === E.active && E.phase === "playing") showLoop(); };
+  v.onerror = () => { E.lastError = `Can't play "${cue.title}"`; if (slot === E.active && E.phase === "playing") showLoop(); renderAll(); };
+  E.slotCue[slot] = cue.id; E.slotUrl[slot] = cue.url;
+  v.src = cue.url; v.currentTime = 0; v.load();
+}
+function prepareArmed() {
+  const i = idx(E.armedId); if (i < 0) return;
+  const slot = 1 - E.active;
+  if (E.visual.alpha[slot] !== 0) return;
+  const cue = S.cues[i];
+  if (E.slotCue[slot] !== cue.id || E.slotUrl[slot] !== cue.url) load(slot, cue);
+  else if (E.slots[slot].currentTime > .01) E.slots[slot].currentTime = 0;
+}
+function prepareLoop(cueId) {
+  const ref = loopFor(cueId);
+  const url = ref ? ref.url : null;
+  if (url === E.loopUrl) return;
+  E.loopUrl = url;
+  if (url) { loopV.src = url; loopV.load(); } else { loopV.removeAttribute("src"); loopV.load(); }
+}
+function cancelRamp(slot) { if (E.ramps[slot]) cancelAnimationFrame(E.ramps[slot]); E.ramps[slot] = null; }
+function ramp(slot, to, secs) {
+  cancelRamp(slot);
+  const p = E.slots[slot];
+  if (secs <= 0) { p.volume = to; return; }
+  const from = p.volume, t0 = performance.now();
+  const step = now => {
+    const f = Math.min(1, (now - t0) / (secs * 1000));
+    p.volume = Math.max(0, Math.min(1, from + (to - from) * f));
+    E.ramps[slot] = f < 1 ? requestAnimationFrame(step) : null;
+  };
+  E.ramps[slot] = requestAnimationFrame(step);
+}
+
+// ---------- Output (full screen of the stage; the Mac app opens a borderless window on the chosen display) ----------
+const isOut = () => document.fullscreenElement === $("stage");
+function toggleOutput() { if (isOut()) document.exitFullscreen(); else $("stage").requestFullscreen().catch(()=>{}); }
+document.addEventListener("fullscreenchange", renderAll);
+
+// ---------- Rendering the UI ----------
+function badge(text, color) { return `<span class="badge" style="background:${color}">${text}</span>`; }
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+
+function renderList() {
+  const list = $("list"), has = S.cues.length > 0;
+  $("empty").style.display = has ? "none" : "flex";
+  list.style.display = has ? "block" : "none";
+  const line = $("insertLine");
+  list.innerHTML = ""; list.appendChild(line);
+  S.cues.forEach((c, i) => {
+    const row = document.createElement("div");
+    row.className = "row" + (S.selection.has(c.id) ? " sel" : "");
+    row.draggable = true; row.dataset.id = c.id;
+    let badges = "";
+    if (E.playingId === c.id) badges += E.phase === "playing" ? badge("PLAYING", "var(--green)") : badge("LOOP AFTER", "var(--orange)");
+    if (E.armedId === c.id) badges += badge("NEXT", "var(--accent)");
+    const loopLabel = c.loop ? `↻ then loop: ${esc(c.loop.name)}` : "↻ then default loop";
+    row.innerHTML = `
+      <div class="num">${i + 1}</div>
+      <div class="thumb" style="${c.thumb ? `background-image:url(${c.thumb})` : ""}">${c.thumb ? "" : "🎞"}</div>
+      <div class="meta"><div class="ttl">${esc(c.title)}</div><div class="sub"><span>${formatTime(c.duration)}</span><span>${loopLabel}</span></div></div>
+      ${badges}`;
+    list.appendChild(row);
+  });
+  const total = S.cues.reduce((a, c) => a + c.duration, 0);
+  $("count").textContent = `${S.cues.length} videos · ${formatTime(total)}`;
+  $("removeBtn").disabled = S.selection.size === 0;
+}
+
+function renderSide() {
+  const tag = $("phaseTag");
+  const [t, col] = E.blackout ? ["BLACKOUT", "var(--gray)"] : E.phase === "playing" ? ["PLAYING", "var(--green)"] : E.phase === "loop" ? ["LOOP", "var(--orange)"] : ["STANDBY", "var(--gray)"];
+  tag.textContent = t; tag.style.background = col;
+  const armed = S.cues.find(c => c.id === E.armedId);
+  $("nextTitle").textContent = armed ? armed.title : "End of setlist";
+  $("nextBtn").disabled = !armed;
+  $("blackBtn").innerHTML = E.blackout ? "☀ Blackout" : "☾ Blackout";
+  $("err").style.display = E.lastError ? "block" : "none";
+  $("err").textContent = E.lastError ? "⚠ " + E.lastError : "";
+  const dl = S.defaultLoop;
+  $("loopName").textContent = dl ? dl.name : "No loop chosen (black)";
+  $("loopThumb").style.backgroundImage = dl?.thumb ? `url(${dl.thumb})` : "";
+  $("loopThumb").textContent = dl?.thumb ? "" : "🎞";
+  $("loopClear").style.display = dl ? "" : "none";
+  $("outBtn").textContent = isOut() ? "Hide Output (Esc)" : "Show Output Full Screen (F)";
+  $("fitBtn").classList.toggle("on", !S.fill); $("fillBtn").classList.toggle("on", S.fill);
+  $("stage").classList.toggle("fill", S.fill);
+  $("xfadeVal").textContent = S.crossfade.toFixed(1) + " s";
+}
+function renderAll() { renderList(); renderSide(); }
+
+// Clock: 5 times a second, like the Swift ShowClock
+setInterval(() => {
+  let el = 0, dur = 0;
+  if (E.phase === "playing") {
+    const v = E.slots[E.active], cue = S.cues.find(c => c.id === E.playingId);
+    el = v.currentTime || 0; dur = cue?.duration || v.duration || 0;
+  }
+  $("elapsed").textContent = formatTime(el);
+  $("remaining").textContent = "-" + formatTime(Math.max(0, dur - el));
+  $("remaining").style.color = dur > 0 && dur - el < 10 ? "var(--orange)" : "";
+  $("progress").style.width = (dur > 0 ? Math.min(el / dur, 1) * 100 : 0) + "%";
+}, 200);
+
+// ---------- Input ----------
+const fileIn = $("fileIn"), loopIn = $("loopIn");
+let loopTarget = null;   // null = default loop, otherwise a cue id
+const chooseVideos = () => { fileIn.value = ""; fileIn.click(); };
+fileIn.onchange = () => addFiles(fileIn.files);
+function chooseLoop(cueId) { loopTarget = cueId; loopIn.value = ""; loopIn.click(); }
+loopIn.onchange = () => {
+  const f = loopIn.files[0]; if (!f) return;
+  const ref = makeLoopRef(f);
+  if (loopTarget == null) S.defaultLoop = ref;
+  else { const c = S.cues.find(c => c.id === loopTarget); if (c) c.loop = ref; }
+  loopSettingChanged();
+};
+
+$("addBtn").onclick = chooseVideos; $("addBtn2").onclick = chooseVideos;
+$("removeBtn").onclick = () => removeIds(new Set(S.selection));
+$("nextBtn").onclick = next; $("backBtn").onclick = armPrevious; $("loopBtn").onclick = showLoop;
+$("blackBtn").onclick = toggleBlackout; $("stopBtn").onclick = stop;
+$("loopChoose").onclick = () => chooseLoop(null);
+$("loopClear").onclick = () => { S.defaultLoop = null; loopSettingChanged(); };
+$("outBtn").onclick = toggleOutput;
+$("fitBtn").onclick = () => { S.fill = false; renderSide(); };
+$("fillBtn").onclick = () => { S.fill = true; renderSide(); };
+$("xfade").oninput = e => { S.crossfade = +e.target.value; renderSide(); };
+$("xfade").onchange = e => e.target.blur();
+$("audioChk").onchange = e => { S.videoAudio = e.target.checked; E.slots.forEach(v => v.muted = !S.videoAudio); e.target.blur(); };
+
+// Selection, double-click, right-click
+const list = $("list");
+list.addEventListener("mousedown", e => {
+  const row = e.target.closest(".row");
+  if (!row) { if (e.button === 0) { S.selection.clear(); renderList(); } return; }
+  const id = +row.dataset.id;
+  if (e.button === 2) { if (!S.selection.has(id)) { S.selection = new Set([id]); anchorId = id; renderList(); } return; }
+  if (e.shiftKey && anchorId != null) {
+    const a = idx(anchorId), b = idx(id);
+    S.selection = new Set(S.cues.slice(Math.min(a, b), Math.max(a, b) + 1).map(c => c.id));
+  } else if (e.ctrlKey || e.metaKey) {
+    S.selection.has(id) ? S.selection.delete(id) : S.selection.add(id); anchorId = id;
+  } else if (!S.selection.has(id) || S.selection.size === 1) {
+    S.selection = new Set([id]); anchorId = id;
+  }
+  renderList();
+});
+list.addEventListener("dblclick", e => { const row = e.target.closest(".row"); if (row) playNow(+row.dataset.id); });
+
+const ctx = $("ctx");
+function hideCtx() { ctx.style.display = "none"; }
+list.addEventListener("contextmenu", e => {
+  e.preventDefault();
+  const ids = [...S.selection]; if (!ids.length) return;
+  const items = [];
+  if (ids.length === 1) {
+    const id = ids[0], cue = S.cues.find(c => c.id === id);
+    items.push(["Play Now", () => playNow(id)], ["Set as Next", () => arm(id)], "-",
+               ["Choose Loop for After This Video…", () => chooseLoop(id)]);
+    if (cue?.loop) items.push(["Use the Default Loop", () => { cue.loop = null; loopSettingChanged(); }]);
+    items.push("-");
+  }
+  items.push(["Show in Finder", null], ["Remove", () => removeIds(new Set(ids))]);
+  ctx.innerHTML = "";
+  for (const it of items) {
+    const d = document.createElement("div");
+    if (it === "-") { d.className = "msep"; }
+    else {
+      d.className = "mi" + (it[1] ? "" : " off"); d.textContent = it[0];
+      if (!it[1]) d.title = "Works in the Mac app";
+      else d.onclick = () => { hideCtx(); it[1](); };
+    }
+    ctx.appendChild(d);
+  }
+  ctx.style.display = "block";
+  ctx.style.left = Math.min(e.clientX, innerWidth - 290) + "px";
+  ctx.style.top = Math.min(e.clientY, innerHeight - ctx.offsetHeight - 8) + "px";
+});
+document.addEventListener("mousedown", e => { if (!ctx.contains(e.target)) hideCtx(); if (!e.target.closest(".menu")) closeMenus(); });
+
+// Drag to reorder + drop files from Explorer/Finder
+let dragIds = null;
+const line = () => $("insertLine");
+function dropIndex(y) {
+  const rows = [...list.querySelectorAll(".row")];
+  for (let i = 0; i < rows.length; i++) { const r = rows[i].getBoundingClientRect(); if (y < r.top + r.height / 2) return i; }
+  return rows.length;
+}
+function showLine(i) {
+  const rows = [...list.querySelectorAll(".row")];
+  const lr = list.getBoundingClientRect();
+  let y;
+  if (!rows.length) y = 4;
+  else if (i < rows.length) y = rows[i].getBoundingClientRect().top - lr.top + list.scrollTop - 1;
+  else { const r = rows[rows.length - 1].getBoundingClientRect(); y = r.bottom - lr.top + list.scrollTop - 1; }
+  line().style.top = y + "px"; line().style.display = "block";
+}
+list.addEventListener("dragstart", e => {
+  const row = e.target.closest(".row"); if (!row) return;
+  const id = +row.dataset.id;
+  dragIds = S.selection.has(id) ? new Set(S.selection) : new Set([id]);
+  e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "videoplayer");
+  setTimeout(() => list.querySelectorAll(".row").forEach(r => dragIds?.has(+r.dataset.id) && r.classList.add("dragging")));
+});
+list.addEventListener("dragend", () => { dragIds = null; line().style.display = "none"; renderList(); });
+list.addEventListener("dragover", e => { e.preventDefault(); e.dataTransfer.dropEffect = dragIds ? "move" : "copy"; showLine(dropIndex(e.clientY)); });
+list.addEventListener("dragleave", e => { if (!list.contains(e.relatedTarget)) line().style.display = "none"; });
+list.addEventListener("drop", e => {
+  e.preventDefault(); line().style.display = "none";
+  const i = dropIndex(e.clientY);
+  if (dragIds) { moveIds(dragIds, i); dragIds = null; }
+  else if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files, i);
+});
+const empty = $("empty");
+empty.addEventListener("dragover", e => { e.preventDefault(); empty.classList.add("target"); });
+empty.addEventListener("dragleave", () => empty.classList.remove("target"));
+empty.addEventListener("drop", e => { e.preventDefault(); empty.classList.remove("target"); addFiles(e.dataTransfer.files); });
+// Stop the browser from opening a file dropped anywhere else
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => e.preventDefault());
+
+// Menus
+function closeMenus() { document.querySelectorAll(".menu.open").forEach(m => m.classList.remove("open")); }
+document.querySelectorAll(".menu > .title").forEach(t => {
+  t.addEventListener("mousedown", e => { const m = t.parentElement, was = m.classList.contains("open"); closeMenus(); if (!was) m.classList.add("open"); e.stopPropagation(); });
+  t.addEventListener("mouseenter", () => { if (document.querySelector(".menu.open")) { closeMenus(); t.parentElement.classList.add("open"); } });
+});
+const acts = { add: chooseVideos, next, back: armPrevious, loop: showLoop, black: toggleBlackout, output: toggleOutput, stop };
+document.querySelectorAll(".mi[data-act]").forEach(mi => mi.addEventListener("click", () => { closeMenus(); acts[mi.dataset.act](); }));
+
+// Resizable split
+$("divider").addEventListener("mousedown", e => {
+  const side = $("side"), startX = e.clientX, startW = side.offsetWidth;
+  const mv = ev => { side.style.width = Math.max(360, Math.min(480, startW - (ev.clientX - startX))) + "px"; };
+  const up = () => { removeEventListener("mousemove", mv); removeEventListener("mouseup", up); };
+  addEventListener("mousemove", mv); addEventListener("mouseup", up);
+});
+
+// Show keys (same as AppDelegate.handleKey)
+document.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "o") { e.preventDefault(); chooseVideos(); }
+    return;
+  }
+  if (e.target.matches?.("input[type=text]")) return;
+  switch (e.key) {
+    case " ": case "ArrowRight": case "PageDown": e.preventDefault(); next(); return;
+    case "ArrowLeft": case "PageUp": e.preventDefault(); armPrevious(); return;
+    case "Delete": case "Backspace": if (S.selection.size) { e.preventDefault(); removeIds(new Set(S.selection)); } return;
+  }
+  switch (e.key.toLowerCase()) {
+    case "l": showLoop(); return;
+    case "b": case ".": toggleBlackout(); return;
+    case "f": toggleOutput(); return;
+  }
+});
+
+renderAll();
+render(0);
+</script>
+</body>
+</html>
