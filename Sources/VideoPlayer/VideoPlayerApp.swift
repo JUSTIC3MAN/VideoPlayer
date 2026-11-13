@@ -36,7 +36,7 @@ struct VideoPlayerApp: App {
                 Button("Previous Video  (controller B)") { appDelegate.engine.playPrevious() }
                 Button("Pause / Resume  (P, controller Y)") { appDelegate.engine.togglePause() }
                 Button("Back One  (←, Page Up)") { appDelegate.engine.armPrevious() }
-                Button("Loop Visual  (L)") { appDelegate.engine.showLoop() }
+                Button("Loop Visual  (L, controller X)") { appDelegate.engine.showLoop() }
                 Button("Blackout  (B)") { appDelegate.engine.toggleBlackout() }
                 Divider()
                 Button("Show / Hide Output  (F, Esc)") { appDelegate.output.toggle() }
@@ -71,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.updater.check(userInitiated: false)
         }
 
-        // Xbox controller: A = Next, B = previous video, Y = pause.
+        // Xbox controller: A = Next, B = previous video, X = the songs' loop, Y = pause.
         _ = gamepad
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in

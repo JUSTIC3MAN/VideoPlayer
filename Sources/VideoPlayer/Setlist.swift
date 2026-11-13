@@ -99,6 +99,15 @@ final class Setlist: ObservableObject {
         loopSource(cueID: cueID).ref
     }
 
+    /// Before any video has played (or after Stop): the loop of the part the NEXT video is in,
+    /// or the first loop row when NEXT has no loop.
+    func loopSourceBeforeShow(next: UUID?) -> (ref: FileRef?, rowID: UUID?) {
+        let source = loopSource(cueID: next)
+        if source.ref != nil { return source }
+        let first = cues.first { $0.isLoop }
+        return (first?.file, first?.id)
+    }
+
     /// For the log: "loop_bars (videos 1-2), loop_2 (videos 3-4)".
     func loopSummary() -> String {
         let layout = SetlistLayout(cues: cues)

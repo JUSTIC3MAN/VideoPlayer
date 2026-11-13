@@ -1,10 +1,10 @@
 import Combine
 import GameController
 
-/// Game controller buttons for the show: A = Next, B = previous video, Y = pause / resume.
+/// Game controller buttons for the show: A = Next, B = previous video, X = the songs' loop, Y = pause / resume.
 ///
 /// Made for an Xbox controller. PlayStation and other controllers that macOS supports work the same way,
-/// with the buttons in the same places (on PlayStation: ✕ Next, ○ Previous, △ Pause).
+/// with the buttons in the same places (on PlayStation: ✕ Next, ○ Previous, □ Loop, △ Pause).
 /// Pair the controller once in System Settings → Bluetooth; after that it connects by itself when turned on.
 final class GamepadInput: ObservableObject {
     /// The connected controller's name; nil when none is connected.
@@ -50,6 +50,11 @@ final class GamepadInput: ObservableObject {
             guard pressed, let self else { return }
             showLog("Controller B: Previous")
             self.engine.playPrevious()
+        }
+        pad.buttonX.pressedChangedHandler = { [weak self] _, _, pressed in
+            guard pressed, let self else { return }
+            showLog("Controller X: Loop")
+            self.engine.showLoop()
         }
         pad.buttonY.pressedChangedHandler = { [weak self] _, _, pressed in
             guard pressed, let self else { return }

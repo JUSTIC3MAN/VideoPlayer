@@ -86,9 +86,10 @@ jobs:
           # Real mouse clicks at the button positions (screen points; the window opens at the same place every run)
           click() { front; sleep 0.3; cliclick "c:$2" >> steps.log 2>&1; step "clicked $1 at $2"; }
           dclick() { front; sleep 0.3; cliclick "dc:$2" >> steps.log 2>&1; step "double-clicked $1 at $2"; }
+          rclick() { front; sleep 0.3; cliclick "rc:$2" >> steps.log 2>&1; step "right-clicked $1 at $2"; }
           NEXT=775,450; PREVIOUS=684,507; PAUSE=787,507; LOOP=878,507; BACKONE=680,539; BLACKOUT=793,539; STOP=888,539
           SEEK75=884,391; ADD=252,87; USELOOP=370,87
-          ROW2=220,240; ROW4=220,398; ROW6=220,556     # setlist rows are 79 points apart
+          ROW1=220,161; ROW2=220,240; ROW4=220,398; ROW5=220,477; ROW6=220,556     # setlist rows are 79 points apart
 
           build/VideoPlayer.app/Contents/MacOS/VideoPlayer > app.log 2>&1 &
           sleep 8
@@ -121,9 +122,19 @@ jobs:
           click "Back One" $BACKONE; sleep 1;   shot 19_back_one_next_moves_up
           dclick "row 6 (yellow)" $ROW6;      sleep 4.3; shot 20_yellow_ended_its_own_loop3
           dclick "row 4 (loop_2)" $ROW4;      sleep 1.5; shot 21_doubleclick_loop2_shows_it_now
+          key "keystroke \"l\""; sleep 1;            shot 21b_L_back_to_yellows_own_loop3
           click "row 2 (red)" $ROW2;          sleep 0.5
           click "Use as Loop" $USELOOP; sleep 1; shot 22_red_turned_into_a_loop
           click "Use as Video" $USELOOP; sleep 1; shot 23_red_back_to_a_video
+
+          step "LOOP BEFORE THE SHOW (L / controller X: the loop of the part NEXT is in)"
+          click "Stop" $STOP;           sleep 1.5
+          rclick "row 5 (green)" $ROW5; sleep 1
+          key "keystroke \"Set\""; sleep 0.5; key "key code 36"; sleep 1; shot 23b_green_set_as_next
+          key "keystroke \"l\""; sleep 1.5;          shot 23c_L_before_show_shows_part2_loop
+          dclick "row 1 (loop_bars)" $ROW1;   sleep 1.5; shot 23d_doubleclick_loop_bars
+          key "keystroke \"l\""; sleep 1;            shot 23e_L_back_to_part2_loop
+          click "Stop" $STOP;           sleep 1.5
 
           step "ADD VIDEOS (file window, pick a video by its path)"
           click "Add Videos" $ADD; sleep 3; shot 24_add_videos_after_3s
@@ -154,8 +165,11 @@ jobs:
                   'Play #2 "song_blue"', "Blackout on", "Loop visual: loop_bars", "Blackout off",
                   'Play #4 "song_yellow"', "Loop visual: loop_3",          # double-click; its own loop
                   "Show loop now: loop_2",                                 # double-click a loop row
+                  "Loop visual: loop_3",                                   # L: back to yellow's own loop
                   "Now a loop: song_red", "Now a video: song_red",         # Use as Loop / Use as Video
-                  "Added 1 video(s)"]
+                  "Stop", "Loop visual: loop_2",                           # Set as Next green; L before the show
+                  "Show loop now: loop_bars", "Loop visual: loop_2",       # pick one by hand; L goes back
+                  "Stop", "Added 1 video(s)"]
           i = 0
           for line in log:
               if i < len(want) and want[i] in line:

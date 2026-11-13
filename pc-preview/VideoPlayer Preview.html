@@ -190,7 +190,7 @@
       <div class="mi" data-act="prev">Previous Video  (controller B)</div>
       <div class="mi" data-act="pause">Pause / Resume  (P, controller Y)</div>
       <div class="mi" data-act="back">Back One  (←, Page Up)</div>
-      <div class="mi" data-act="loop">Loop Visual  (L)</div>
+      <div class="mi" data-act="loop">Loop Visual  (L, controller X)</div>
       <div class="mi" data-act="black">Blackout  (B)</div>
       <div class="msep"></div>
       <div class="mi" data-act="output">Show / Hide Output  (F, Esc)</div>
@@ -254,7 +254,7 @@
         <div class="row2">
           <button class="btn" id="prevBtn" title="Plays the video before the one playing now (B on a game controller)">⏮ Previous</button>
           <button class="btn" id="pauseBtn" style="min-width:84px;justify-content:center" title="Freezes the picture; press again to carry on (P, or Y on a game controller)">⏸ Pause</button>
-          <button class="btn" id="loopBtn">↻ Loop</button>
+          <button class="btn" id="loopBtn" title="Shows the loop for the current song (L, or X on a game controller)">↻ Loop</button>
         </div>
         <div class="row2">
           <button class="btn" id="backBtn" title="Moves NEXT up one video without playing it (← or Page Up)">↑ Back One</button>
@@ -444,7 +444,10 @@ const cueAfter = id => {
 const videoBefore = i => { for (let j = i - 1; j >= 0; j--) if (!S.cues[j].isLoop) return j; return -1; };
 const automaticNext = () => E.playingId == null ? firstVideoId() : cueAfter(E.playingId);
 
-function setArmed(id) { const changed = id !== E.armedId; E.armedId = id; if (changed) prepareArmed(); }
+function setArmed(id) {
+  const changed = id !== E.armedId; E.armedId = id;
+  if (changed) { prepareArmed(); if (E.phase === "idle") prepareLoop(null); }   // before the show: the loop of NEXT's part
+}
 
 function cuesChanged() {
   if (E.armedByUser && isVid(E.armedId)) prepareArmed();
@@ -541,7 +544,7 @@ function showLoop(lift = true) {
     renderAll(); return;
   }
   E.paused = false;
-  if (!E.loopUrl) prepareLoop(E.playingId);
+  prepareLoop(E.playingId);   // usually in place already; then this does nothing
   loopV.play().catch(()=>{});
   const wasIdle = E.phase === "idle";
   E.phase = "loop"; E.visual.loopAlpha = 1; E.visual.alpha = [0, 0];
@@ -555,6 +558,17 @@ function showLoop(lift = true) {
     prepareArmed();
   }, (fade + .05) * 1000);
   renderAll();
+}
+// The Loop button / L key / X on a controller: the loop assigned to the songs (the playing or last video's own loop
+// or its part's loop row; before the show, the loop of the part NEXT is in). Replaces a loop picked by hand.
+function showSongsLoop() {
+  E.forced = null;
+  if (E.phase === "loop") {
+    const before = E.loopUrl;
+    prepareLoop(E.playingId);
+    if (E.loopUrl !== before && !E.paused) loopV.play().catch(()=>{});
+  }
+  showLoop(true);
 }
 // Double-click a loop row (or Show This Loop Now): shows that loop now, until the next video plays
 function showLoopRow(id) {
@@ -602,9 +616,16 @@ function prepareArmed() {
   if (E.slotCue[slot] !== cue.id || E.slotUrl[slot] !== cue.url) load(slot, cue);
   else if (E.slots[slot].currentTime > .01) E.slots[slot].currentTime = 0;
 }
-// Puts the right loop in the loop player: a loop row picked by hand, the video's own loop, or the loop row above it
+// Puts the right loop in the loop player: a loop row picked by hand, the video's own loop, or the loop row above it.
+// With no video (nothing played yet, or after Stop): the loop of the part NEXT is in, else the first loop row.
 function prepareLoop(cueId) {
-  const src = E.forced ? { url: E.forced.url, rowId: E.forced.rowId } : loopSource(cueId);
+  let src;
+  if (E.forced) src = { url: E.forced.url, rowId: E.forced.rowId };
+  else if (cueId != null) src = loopSource(cueId);
+  else {
+    src = loopSource(E.armedId);
+    if (!src.url) { const f = S.cues.find(c => c.isLoop); src = { url: f?.url ?? null, rowId: f?.id ?? null }; }
+  }
   E.loopRowId = src.rowId;
   if (src.url === E.loopUrl) return;
   E.loopUrl = src.url;
@@ -629,7 +650,7 @@ const isOut = () => document.fullscreenElement === $("stage");
 function toggleOutput() { if (isOut()) document.exitFullscreen(); else $("stage").requestFullscreen().catch(()=>{}); }
 document.addEventListener("fullscreenchange", renderAll);
 
-// ---------- Game controller (A = Next, B = Previous, Y = Pause) ----------
+// ---------- Game controller (A = Next, B = Previous, X = Loop, Y = Pause) ----------
 // Chrome and Edge give Xbox controllers the standard layout: button 0 = A, 1 = B, 2 = X, 3 = Y.
 // A browser only sees a controller after one of its buttons has been pressed on this page.
 let padName = null, padWas = {};
@@ -642,6 +663,7 @@ function readPads() {
     const was = padWas[p.index] || [], now = p.buttons.map(b => b.pressed);
     if (now[0] && !was[0]) next();
     if (now[1] && !was[1]) playPrevious();
+    if (now[2] && !was[2]) showSongsLoop();
     if (now[3] && !was[3]) togglePause();
     padWas[p.index] = now;
   }
@@ -716,7 +738,7 @@ function renderSide() {
   $("err").style.display = E.lastError ? "block" : "none";
   $("err").textContent = E.lastError ? "⚠ " + E.lastError : "";
   $("ctl").innerHTML = padName
-    ? `<span class="pad on">🎮</span><span>${esc(padName)}: A Next · B Previous · Y Pause</span>`
+    ? `<span class="pad on">🎮</span><span>${esc(padName)}: A Next · B Previous · X Loop · Y Pause</span>`
     : `<span class="pad">🎮</span><span>No game controller. Connect an Xbox controller and press any button on it.</span>`;
 
   // Loops panel: the loops in setlist order and the videos each one plays after
@@ -807,7 +829,7 @@ $("useLoopBtn").onclick = () => {
   setLoopRows(new Set(S.selection), !(sel.length && sel.every(c => c.isLoop)));
 };
 $("nextBtn").onclick = next; $("prevBtn").onclick = playPrevious; $("pauseBtn").onclick = togglePause;
-$("backBtn").onclick = armPrevious; $("loopBtn").onclick = () => showLoop();
+$("backBtn").onclick = armPrevious; $("loopBtn").onclick = showSongsLoop;
 $("blackBtn").onclick = toggleBlackout; $("stopBtn").onclick = stop;
 $("loopSchedule").addEventListener("click", e => {
   if (e.target.closest("#addLoopBtn")) { chooseLoop({ row: true }); return; }
@@ -937,7 +959,7 @@ document.querySelectorAll(".menu > .title").forEach(t => {
   t.addEventListener("mousedown", e => { const m = t.parentElement, was = m.classList.contains("open"); closeMenus(); if (!was) m.classList.add("open"); e.stopPropagation(); });
   t.addEventListener("mouseenter", () => { if (document.querySelector(".menu.open")) { closeMenus(); t.parentElement.classList.add("open"); } });
 });
-const acts = { add: chooseVideos, next, prev: playPrevious, pause: togglePause, back: armPrevious, loop: () => showLoop(), black: toggleBlackout, output: toggleOutput, stop };
+const acts = { add: chooseVideos, next, prev: playPrevious, pause: togglePause, back: armPrevious, loop: showSongsLoop, black: toggleBlackout, output: toggleOutput, stop };
 document.querySelectorAll(".mi[data-act]").forEach(mi => mi.addEventListener("click", () => { closeMenus(); acts[mi.dataset.act](); }));
 
 // Resizable split
@@ -962,7 +984,7 @@ document.addEventListener("keydown", e => {
   }
   switch (e.key.toLowerCase()) {
     case "p": togglePause(); return;
-    case "l": showLoop(); return;
+    case "l": showSongsLoop(); return;
     case "b": case ".": toggleBlackout(); return;
     case "f": toggleOutput(); return;
   }

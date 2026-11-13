@@ -492,6 +492,7 @@ struct TransportView: View {
                 .disabled(engine.phase == .idle)
                 .help("Freezes the picture; press again to carry on (P, or Y on a game controller)")
                 Button { engine.showLoop() } label: { Label("Loop", systemImage: "repeat") }
+                    .help("Shows the loop for the current song (L, or X on a game controller)")
             }
             .frame(maxWidth: .infinity)
 
@@ -519,7 +520,7 @@ struct ControllerStatus: View {
             Image(systemName: "gamecontroller.fill")
                 .foregroundStyle(gamepad.controllerName == nil ? Color.secondary : Color.green)
             if let name = gamepad.controllerName {
-                Text("\(name): A Next · B Previous · Y Pause")
+                Text("\(name): A Next · B Previous · X Loop · Y Pause")
             } else {
                 Text("No game controller. Pair an Xbox controller in System Settings → Bluetooth.")
             }

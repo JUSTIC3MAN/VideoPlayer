@@ -38,7 +38,11 @@ final class PlaybackEngine: ObservableObject {
     @Published private(set) var phase: ShowPhase = .idle
     @Published private(set) var playingCueID: UUID?
     @Published var armedCueID: UUID? {
-        didSet { if armedCueID != oldValue { prepareArmed() } }
+        didSet {
+            guard armedCueID != oldValue else { return }
+            prepareArmed()
+            if phase == .idle { prepareLoop(for: nil) }   // before the show, the loop of NEXT's part
+        }
     }
     @Published private(set) var blackout = false
     /// The video or loop on screen is frozen (Pause: P key, or Y on a game controller).
@@ -321,8 +325,19 @@ final class PlaybackEngine: ObservableObject {
         }
     }
 
-    /// The Loop button / L key: shows the loop visual (and lifts a blackout or a pause).
+    /// The Loop button / L key / X on a game controller: shows the loop assigned to the songs. That is the
+    /// playing (or last played) video's own loop or its part's loop row; before the show, the loop of the
+    /// part NEXT is in. A loop picked by hand (double-click) is replaced by it. Also lifts a blackout or a pause.
     func showLoop() {
+        forcedLoop = nil
+        if phase == .loop {
+            let before = loopPath
+            prepareLoop(for: playingCueID)
+            if loopPath != before {
+                showLog("Loop visual: \(looper == nil ? "none chosen (black)" : loopName ?? "?")")
+                if !paused { loopPlayer.play() }
+            }
+        }
         enterLoop(liftBlackout: true)
     }
 
@@ -352,7 +367,7 @@ final class PlaybackEngine: ObservableObject {
             return
         }
         paused = false
-        if looper == nil { prepareLoop(for: playingCueID) }
+        prepareLoop(for: playingCueID)   // usually in place already; then this does nothing
         showLog("Loop visual: \(looper == nil ? "none chosen (black)" : loopName ?? "?")")
         loopPlayer.play()
 
@@ -488,13 +503,16 @@ final class PlaybackEngine: ObservableObject {
     }
 
     /// Puts the right loop video in the loop player: a loop row picked by hand, the video's own loop,
-    /// or the loop row above the video.
+    /// or the loop row above the video. With no video (nothing played yet, or after Stop): the loop of
+    /// the part NEXT is in.
     private func prepareLoop(for cueID: UUID?) {
         let source: (ref: FileRef?, rowID: UUID?)
         if let forcedLoop {
             source = (forcedLoop.file, forcedLoop.row)
-        } else {
+        } else if let cueID {
             source = setlist.loopSource(cueID: cueID)
+        } else {
+            source = setlist.loopSourceBeforeShow(next: armedCueID)
         }
         if loopRowID != source.rowID { loopRowID = source.rowID }
         let ref = source.ref
