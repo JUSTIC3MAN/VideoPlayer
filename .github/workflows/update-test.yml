@@ -24,14 +24,22 @@ jobs:
           mv old/VideoPlayer.app /Applications/
           defaults read /Applications/VideoPlayer.app/Contents/Info CFBundleShortVersionString
 
-      - name: What GitHub's API answers without a login (the app checks the same way)
+      # The app asks GitHub's API for the latest release without a login, like this. GitHub allows 60 such
+      # requests an hour per internet address, and GitHub's test Macs share addresses, so the allowance is
+      # sometimes used up by others. Then the test can't run (on a real Mac the app asks once per launch).
+      - name: Can this Mac ask GitHub for the latest release (as the app does)?
         run: |
           curl -s -i -H "User-Agent: VideoPlayer-updater" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/releases/latest" -o api.txt || true
-          grep -i "^HTTP\|^x-ratelimit-limit\|^x-ratelimit-remaining\|^x-ratelimit-reset" api.txt || true
+          grep -i "^HTTP\|^x-ratelimit-limit\|^x-ratelimit-remaining" api.txt || true
           grep -o '"tag_name": *"[^"]*"' api.txt || grep -o '"message": *"[^"]*"' api.txt || true
+          if grep -qi "rate limit exceeded" api.txt; then
+            echo "RATE_LIMITED=1" >> "$GITHUB_ENV"
+            echo "::warning title=Update test skipped::GitHub's API allowance for this test Mac's internet address is used up (shared with other GitHub test Macs), so the updater can't be tested on it right now."
+          fi
 
       - name: Open it and click "Update and Restart"
+        if: env.RATE_LIMITED != '1'
         run: |
           set +e
           log() { echo "$1" | tee -a update.log; }
