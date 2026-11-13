@@ -13,6 +13,9 @@ final class Setlist: ObservableObject {
     @Published var cues: [Cue] = [] { didSet { scheduleSave() } }
     /// The columns, left to right. There is always at least one.
     @Published var columns: [ShowColumn] = [ShowColumn(name: "Part 1")] { didSet { scheduleSave() } }
+    /// The column whose name is being typed (not saved). Names are plain text otherwise, so the show keys
+    /// (Space, arrows, P …) never land in a name field by accident.
+    @Published var renamingColumn: UUID?
     @Published var crossfade: Double = 0.5 { didSet { scheduleSave() } }
     @Published var fillScreen = false { didSet { scheduleSave() } }
     @Published var videoAudio = true { didSet { scheduleSave() } }

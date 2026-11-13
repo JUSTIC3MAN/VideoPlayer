@@ -22,6 +22,8 @@ struct VideoPlayerApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Add Videos…") { appDelegate.setlist.chooseVideos() }
                     .keyboardShortcut("o", modifiers: [.command])
+                Button("Add Column") { appDelegate.setlist.renamingColumn = appDelegate.setlist.addColumn() }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
                 Divider()
                 Button("Open Setlist…") { appDelegate.setlist.openSetlistFile() }
                     .keyboardShortcut("o", modifiers: [.command, .shift])

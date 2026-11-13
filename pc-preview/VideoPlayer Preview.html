@@ -93,9 +93,29 @@
   .insert-line { position: absolute; left: 10px; right: 10px; height: 2px; background: var(--accent); border-radius: 1px; pointer-events: none; display: none; }
   .insert-line::before { content: ""; position: absolute; left: -4px; top: -3px; width: 6px; height: 6px; border: 2px solid var(--accent); border-radius: 50%; background: var(--pane); }
 
-  .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
-  .empty.target { background: rgba(10,132,255,.12); }
-  .empty .big { font-size: 15px; }
+  /* Columns: one per artist or part of the show; the show plays them left to right */
+  .board { flex: 1; display: flex; gap: 10px; padding: 10px; overflow-x: auto; overflow-y: hidden; min-height: 0; }
+  .col { flex: none; display: flex; flex-direction: column; min-height: 0; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.12); border-radius: 8px; overflow: hidden; }
+  .colhead { display: flex; align-items: center; gap: 6px; padding: 7px 8px 7px 6px; border-bottom: 1px solid var(--sep); flex: none; }
+  .colname { flex: 1; min-width: 0; background: transparent; border: 0; border-radius: 4px; padding: 2px 4px; font-weight: 600; color: var(--text); }
+  .colname:hover { background: rgba(255,255,255,.06); }
+  .colname:focus { outline: 2px solid var(--accent); background: rgba(0,0,0,.3); }
+  .colname::placeholder { color: var(--text2); }
+  .coltitle { flex: 1; min-width: 0; font-weight: 600; padding: 2px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .coltitle.untitled { color: var(--text2); }
+  .colcount { font-size: 10px; color: var(--text2); white-space: nowrap; }
+  .colmenu { background: transparent; border: 0; border-radius: 4px; color: var(--text2); font-size: 15px; line-height: 1; padding: 1px 5px; cursor: default; }
+  .colmenu:hover { background: rgba(255,255,255,.1); color: var(--text); }
+  .collist { flex: 1; overflow-y: auto; position: relative; padding: 4px 6px; }
+  .colempty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text2); }
+  .colempty .ic { font-size: 26px; }
+  .colempty.target { background: rgba(10,132,255,.12); }
+  .addcol { flex: 0 0 96px; border: 1px dashed rgba(255,255,255,.25); border-radius: 8px; background: transparent; color: var(--text2); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: default; }
+  .addcol:hover { background: rgba(255,255,255,.04); color: var(--text); }
+  .col.compact .row { gap: 8px; }
+  .col.compact .num { width: 22px; font-size: 13px; }
+  .col.compact .row.loop .num { font-size: 16px; }
+  .col.compact .thumb { width: 72px; height: 40px; font-size: 12px; }
   .foot { font-size: 10px; color: var(--text2); padding: 8px; text-align: center; }
 
   /* Side panel */
@@ -212,19 +232,14 @@
         <h2>Setlist</h2>
         <span class="count" id="count">0 videos · 0 loops · 0:00</span>
         <span class="spacer"></span>
-        <button class="btn" id="addBtn"><span class="ic">＋</span> Add Videos</button>
+        <button class="btn" id="addBtn" title="Adds videos to the column of the selected video (or to the last column)"><span class="ic">＋</span> Add Videos</button>
         <button class="btn" id="useLoopBtn" disabled><span class="ic">∞</span> Use as Loop</button>
         <button class="btn" id="removeBtn" disabled><span class="ic">−</span> Remove</button>
       </div>
       <div class="hr"></div>
-      <div class="empty" id="empty">
-        <svg width="52" height="44" viewBox="0 0 52 44" fill="none" stroke="rgba(235,235,245,.55)" stroke-width="2.5"><rect x="9" y="9" width="40" height="32" rx="4"/><path d="M5 35V7a4 4 0 0 1 4-4h34"/><path d="M17 9v32M41 9v32M9 17h8M9 25h8M9 33h8M41 17h8M41 25h8M41 33h8"/></svg>
-        <div class="big">Drop videos here</div>
-        <button class="btn" id="addBtn2">Add Videos…</button>
-      </div>
-      <div class="list" id="list" style="display:none"><div class="insert-line" id="insertLine"></div></div>
+      <div class="board" id="board"></div>
       <div class="hr"></div>
-      <div class="foot">Drag to reorder · drop videos from Finder · double-click to play a video or show a loop · right-click for more</div>
+      <div class="foot">Drag to reorder or to another column · double-click a column's name to rename it · double-click a video to play it (or a loop to show it) · right-click for more</div>
     </div>
 
     <div class="divider" id="divider"></div>
@@ -300,13 +315,17 @@ const S = {
   // A loop row (isLoop) is never played by Next: it plays after every video below it, up to the next loop row,
   // so each loop row starts a part of the show. "loop" = a video's own loop (right-click), instead of the one above it.
   cues: [],
+  // Named columns (artists or parts of the show), left to right; the show plays them in that order, each top to
+  // bottom. S.cues is kept in that show order; each row's "col" says which column it is in.
+  columns: [{ id: 1, name: "Part 1" }],
   crossfade: 0.5,
   fill: false,
   videoAudio: true,
   selection: new Set(),
 };
 let anchorId = null;   // for shift-click ranges
-let uid = 1;
+let uid = 1, cid = 2;  // row ids, column ids
+let renamingCol = null;  // the column whose name is being typed; names are plain text otherwise
 const $ = id => document.getElementById(id);
 
 function formatTime(s) {
@@ -346,29 +365,71 @@ function nextProbe() {
 }
 
 // ---------- Setlist editing ----------
-function newRow(f, isLoop) {
-  const c = { id: uid++, title: nameOf(f), url: URL.createObjectURL(f), duration: 0, thumb: null, loop: null, isLoop };
+function newRow(f, isLoop, col) {
+  const c = { id: uid++, title: nameOf(f), url: URL.createObjectURL(f), duration: 0, thumb: null, loop: null, isLoop, col };
   probe(c.url, (d, t) => { c.duration = isFinite(d) ? d : 0; c.thumb = t; renderAll(); });
   return c;
 }
-function addFiles(files, index) {
+// ---------- Columns (mirror Setlist.swift) ----------
+const colOf = c => S.columns.some(k => k.id === c.col) ? c.col : S.columns[0].id;
+const rowsIn = id => S.cues.filter(c => colOf(c) === id);
+const colName = id => (S.columns.find(k => k.id === id)?.name ?? "").trim() || "Untitled";
+// Show order from each column's rows: every column, left to right
+const showOrder = rowsOf => S.columns.flatMap(k => rowsOf(k.id).map(c => { c.col = k.id; return c; }));
+function byColumn(rows) { const m = new Map(); for (const c of rows) { const k = colOf(c); if (!m.has(k)) m.set(k, []); m.get(k).push(c); } return m; }
+function replaceColumn(id, rows) { const m = byColumn(S.cues); S.cues = showOrder(k => k === id ? rows : (m.get(k) || [])); }
+function addColumn() {
+  let n = S.columns.length + 1;
+  while (S.columns.some(k => k.name === `Part ${n}`)) n++;
+  const k = { id: cid++, name: `Part ${n}` };
+  S.columns.push(k); renderAll();
+  return k.id;
+}
+function renameColumn(id, name) { const k = S.columns.find(k => k.id === id); if (k) k.name = name; }
+function moveColumn(id, by) {       // left (-1) or right (+1); the show order follows
+  const i = S.columns.findIndex(k => k.id === id), j = i + by;
+  if (i < 0 || j < 0 || j >= S.columns.length) return;
+  const m = byColumn(S.cues);
+  [S.columns[i], S.columns[j]] = [S.columns[j], S.columns[i]];
+  S.cues = showOrder(k => m.get(k) || []);
+  cuesChanged();
+}
+// Its rows go to the end of the column on its left (the first column's go to the start of the next one)
+function removeColumn(id) {
+  const i = S.columns.findIndex(k => k.id === id);
+  if (S.columns.length < 2 || i < 0) return;
+  const m = byColumn(S.cues), moving = m.get(id) || [];
+  if (i > 0) { const l = S.columns[i - 1].id; m.set(l, [...(m.get(l) || []), ...moving]); }
+  else { const r = S.columns[i + 1].id; m.set(r, [...moving, ...(m.get(r) || [])]); }
+  S.columns.splice(i, 1);
+  S.cues = showOrder(k => m.get(k) || []);
+  cuesChanged();
+}
+// Moves rows into a column at a position in it (null: the end); the position counts the column's rows before the move
+function moveRows(ids, colId, index) {
+  const moving = S.cues.filter(c => ids.has(c.id));
+  if (!moving.length || !S.columns.some(k => k.id === colId)) return;
+  const target = rowsIn(colId);
+  const pos = index == null ? null : target.slice(0, index).filter(c => !ids.has(c.id)).length;
+  const rows = target.filter(c => !ids.has(c.id));
+  rows.splice(pos == null ? rows.length : Math.min(Math.max(pos, 0), rows.length), 0, ...moving);
+  const m = byColumn(S.cues.filter(c => !ids.has(c.id)));
+  S.cues = showOrder(k => k === colId ? rows : (m.get(k) || []));
+  cuesChanged();
+}
+// Adds videos to a column (null or unknown: the last column), at a position in it (null: the end)
+function addFiles(files, colId, index) {
   const vids = [...files].filter(isVideo);
   if (!vids.length) return;
-  const at = Math.min(Math.max(index ?? S.cues.length, 0), S.cues.length);
-  S.cues.splice(at, 0, ...vids.map(f => newRow(f, false)));
+  const col = S.columns.some(k => k.id === colId) ? colId : S.columns[S.columns.length - 1].id;
+  const rows = rowsIn(col);
+  rows.splice(index == null ? rows.length : Math.min(Math.max(index, 0), rows.length), 0, ...vids.map(f => newRow(f, false, col)));
+  replaceColumn(col, rows);
   cuesChanged();
 }
 function removeIds(ids) {
   S.cues = S.cues.filter(c => !ids.has(c.id));
   ids.forEach(id => S.selection.delete(id));
-  cuesChanged();
-}
-function moveIds(ids, toIndex) {       // like Array.move(fromOffsets:toOffset:)
-  const moving = S.cues.filter(c => ids.has(c.id));
-  let before = S.cues.slice(0, toIndex).filter(c => !ids.has(c.id)).length;
-  const rest = S.cues.filter(c => !ids.has(c.id));
-  rest.splice(before, 0, ...moving);
-  S.cues = rest;
   cuesChanged();
 }
 // Use as Loop / Use as Video
@@ -678,41 +739,81 @@ function badge(text, color, fg = "#fff") { return `<span class="badge" style="ba
 const esc = s => s.replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
 const thumbHtml = c => `<div class="thumb" style="${c?.thumb ? `background-image:url(${c.thumb})` : ""}">${c?.thumb ? "" : "🎞"}</div>`;
 
-function renderList() {
-  const list = $("list"), has = S.cues.length > 0;
-  $("empty").style.display = has ? "none" : "flex";
-  list.style.display = has ? "block" : "none";
-  const line = $("insertLine");
-  list.innerHTML = ""; list.appendChild(line);
-  const L = layout();
-  S.cues.forEach(c => {
-    const row = document.createElement("div");
-    row.className = "row" + (c.isLoop ? " loop" : "") + (S.selection.has(c.id) ? " sel" : "");
-    row.draggable = true; row.dataset.id = c.id;
-    if (c.isLoop) {
-      const part = L.parts.get(c.id);
-      const cover = part.videos.length ? "Plays after " + videosText(part.videos) : "No videos below it yet: drag it above the first video it should follow";
-      const onScreen = E.phase === "loop" && E.loopRowId === c.id;
-      const b = onScreen ? (E.paused ? badge("PAUSED", "var(--yellow)", "#000") : badge("ON SCREEN", "var(--orange)")) : "";
-      row.innerHTML = `
-        <div class="num">∞</div>${thumbHtml(c)}
-        <div class="meta"><div class="ttl"><span class="lp">LOOP ${part.number}</span>${esc(c.title)}</div><div class="sub"><span>${cover}</span></div></div>
-        ${b}`;
+function rowElement(c, L) {
+  const row = document.createElement("div");
+  row.className = "row" + (c.isLoop ? " loop" : "") + (S.selection.has(c.id) ? " sel" : "");
+  row.draggable = true; row.dataset.id = c.id;
+  if (c.isLoop) {
+    const part = L.parts.get(c.id);
+    const cover = part.videos.length ? "Plays after " + videosText(part.videos) : "No videos below it yet: drag it above the first video it should follow";
+    const onScreen = E.phase === "loop" && E.loopRowId === c.id;
+    const b = onScreen ? (E.paused ? badge("PAUSED", "var(--yellow)", "#000") : badge("ON SCREEN", "var(--orange)")) : "";
+    row.innerHTML = `
+      <div class="num">∞</div>${thumbHtml(c)}
+      <div class="meta"><div class="ttl"><span class="lp">LOOP ${part.number}</span>${esc(c.title)}</div><div class="sub"><span>${cover}</span></div></div>
+      ${b}`;
+  } else {
+    const above = L.loopAbove.has(c.id) ? L.parts.get(L.loopAbove.get(c.id)) : null;
+    const loopLabel = c.loop ? `↻ then its own loop: ${esc(c.loop.name)}` : above ? `↻ then Loop ${above.number}: ${esc(above.title)}` : "↻ then black (no loop above it)";
+    let badges = "";
+    if (E.playingId === c.id) badges += E.phase === "playing"
+      ? (E.paused ? badge("PAUSED", "var(--yellow)", "#000") : badge("PLAYING", "var(--green)"))
+      : badge("LOOP AFTER", "var(--orange)");
+    if (E.armedId === c.id) badges += badge("NEXT", "var(--accent)");
+    row.innerHTML = `
+      <div class="num">${L.videoNumber.get(c.id)}</div>${thumbHtml(c)}
+      <div class="meta"><div class="ttl">${esc(c.title)}</div><div class="sub"><span>${formatTime(c.duration)}</span><span>${loopLabel}</span></div></div>
+      ${badges}`;
+  }
+  return row;
+}
+
+// The columns share the width (at least 250 px each) and scroll sideways when there are more than fit
+function sizeColumns() {
+  const board = $("board"), cols = board.querySelectorAll(".col"), n = Math.max(cols.length, 1);
+  const width = Math.max(250, Math.floor((board.clientWidth - 20 - 96 - 10 * n) / n));
+  cols.forEach(col => { col.style.width = width + "px"; col.classList.toggle("compact", width < 430); });
+}
+
+function renderBoard() {
+  const L = layout(), board = $("board");
+  // Keep scroll positions and an unfinished column name across the redraw
+  const scroll = new Map([...board.querySelectorAll(".collist")].map(l => [+l.dataset.col, l.scrollTop]));
+  const left = board.scrollLeft, ae = document.activeElement;
+  const editing = ae?.classList?.contains("colname") ? { id: +ae.dataset.col, a: ae.selectionStart, b: ae.selectionEnd } : null;
+  board.innerHTML = "";
+  for (const k of S.columns) {
+    const rows = rowsIn(k.id), vids = rows.filter(c => !c.isLoop).length;
+    const col = document.createElement("div");
+    col.className = "col"; col.dataset.col = k.id;
+    const title = k.id === renamingCol
+      ? `<input type="text" class="colname" data-col="${k.id}" value="${esc(k.name)}" placeholder="Name this column" spellcheck="false">`
+      : `<span class="coltitle${k.name.trim() ? "" : " untitled"}" data-col="${k.id}" title="Double-click to rename this column">${esc(colName(k.id))}</span>`;
+    col.innerHTML = `<div class="colhead">
+        ${title}
+        <span class="colcount">${vids} ${vids === 1 ? "video" : "videos"}</span>
+        <button class="colmenu" data-col="${k.id}" title="Column options">⋯</button>
+      </div>`;
+    if (!rows.length) {
+      col.insertAdjacentHTML("beforeend", `<div class="colempty" data-col="${k.id}"><span class="ic">🎞</span><div>Drop videos here</div><button class="btn" data-addto="${k.id}">Add Videos…</button></div>`);
     } else {
-      const above = L.loopAbove.has(c.id) ? L.parts.get(L.loopAbove.get(c.id)) : null;
-      const loopLabel = c.loop ? `↻ then its own loop: ${esc(c.loop.name)}` : above ? `↻ then Loop ${above.number}: ${esc(above.title)}` : "↻ then black (no loop above it)";
-      let badges = "";
-      if (E.playingId === c.id) badges += E.phase === "playing"
-        ? (E.paused ? badge("PAUSED", "var(--yellow)", "#000") : badge("PLAYING", "var(--green)"))
-        : badge("LOOP AFTER", "var(--orange)");
-      if (E.armedId === c.id) badges += badge("NEXT", "var(--accent)");
-      row.innerHTML = `
-        <div class="num">${L.videoNumber.get(c.id)}</div>${thumbHtml(c)}
-        <div class="meta"><div class="ttl">${esc(c.title)}</div><div class="sub"><span>${formatTime(c.duration)}</span><span>${loopLabel}</span></div></div>
-        ${badges}`;
+      const list = document.createElement("div");
+      list.className = "collist"; list.dataset.col = k.id;
+      list.innerHTML = `<div class="insert-line"></div>`;
+      for (const c of rows) list.appendChild(rowElement(c, L));
+      col.appendChild(list);
     }
-    list.appendChild(row);
-  });
+    board.appendChild(col);
+  }
+  board.insertAdjacentHTML("beforeend", `<button class="addcol" id="addColBtn" title="Adds a column you can name, for an artist or a part of the show"><span style="font-size:20px">＋</span><span>Add Column</span></button>`);
+  sizeColumns();
+  board.querySelectorAll(".collist").forEach(l => { l.scrollTop = scroll.get(+l.dataset.col) || 0; });
+  board.scrollLeft = left;
+  if (editing) {
+    const inp = board.querySelector(`.colname[data-col="${editing.id}"]`);
+    if (inp) { inp.focus(); try { inp.setSelectionRange(editing.a, editing.b); } catch {} }
+  }
+
   const total = S.cues.filter(c => !c.isLoop).reduce((a, c) => a + c.duration, 0);
   $("count").textContent = `${L.videoCount} videos · ${L.loopCount} ${L.loopCount === 1 ? "loop" : "loops"} · ${formatTime(total)}`;
   $("removeBtn").disabled = S.selection.size === 0;
@@ -722,6 +823,8 @@ function renderList() {
   ul.innerHTML = allLoops ? `<span class="ic">🎞</span> Use as Video` : `<span class="ic">∞</span> Use as Loop`;
   ul.title = allLoops ? "Turns the selected loops back into videos" : "Turns the selected videos into loops. A loop plays after the videos below it.";
 }
+function renderList() { renderBoard(); }
+new ResizeObserver(sizeColumns).observe(document.getElementById("board"));
 
 function renderSide() {
   const tag = $("phaseTag");
@@ -804,17 +907,26 @@ setInterval(() => {
 
 // ---------- Input ----------
 const fileIn = $("fileIn"), loopIn = $("loopIn");
-let loopTarget = null;   // {row: true} for Add Loop…, or {cue: id} for one video's own loop
-const chooseVideos = () => { fileIn.value = ""; fileIn.click(); };
-fileIn.onchange = () => addFiles(fileIn.files);
+let addTarget = null;    // the column Add Videos puts videos in (null: the selected video's column, else the last one)
+let loopTarget = null;   // {row: true, col?, at?} for Add Loop…, or {cue: id} for one video's own loop
+const selectedColumn = () => { const c = S.cues.find(c => S.selection.has(c.id)); return c ? colOf(c) : null; };
+function chooseVideos(col = null) { addTarget = col; fileIn.value = ""; fileIn.click(); }
+fileIn.onchange = () => addFiles(fileIn.files, addTarget ?? selectedColumn());
 function chooseLoop(target) { loopTarget = target; loopIn.value = ""; loopIn.click(); }
 loopIn.onchange = () => {
   const f = loopIn.files[0]; if (!f) return;
   if (loopTarget?.row) {
-    // Add Loop…: above the selected row; with nothing selected, at the top if there are no loops yet, else at the end
-    const i = S.cues.findIndex(c => S.selection.has(c.id));
-    const at = i >= 0 ? i : (S.cues.some(c => c.isLoop) ? S.cues.length : 0);
-    S.cues.splice(at, 0, newRow(f, true));
+    let col = loopTarget.col, at = loopTarget.at;
+    if (col == null) {
+      // Add Loop…: above the selected row; with nothing selected, at the top if there are no loops yet, else at the end
+      const sel = S.cues.find(c => S.selection.has(c.id));
+      if (sel) { col = colOf(sel); at = rowsIn(col).indexOf(sel); }
+      else if (!S.cues.some(c => c.isLoop)) { col = S.cues.length ? colOf(S.cues[0]) : S.columns[0].id; at = 0; }
+      else { col = S.columns[S.columns.length - 1].id; at = null; }
+    }
+    const rows = rowsIn(col);
+    rows.splice(at == null ? rows.length : Math.min(Math.max(at, 0), rows.length), 0, newRow(f, true, col));
+    replaceColumn(col, rows);
   } else {
     const c = S.cues.find(c => c.id === loopTarget?.cue);
     if (c) c.loop = makeLoopRef(f);
@@ -822,7 +934,7 @@ loopIn.onchange = () => {
   cuesChanged();
 };
 
-$("addBtn").onclick = chooseVideos; $("addBtn2").onclick = chooseVideos;
+$("addBtn").onclick = () => chooseVideos();
 $("removeBtn").onclick = () => removeIds(new Set(S.selection));
 $("useLoopBtn").onclick = () => {
   const sel = S.cues.filter(c => S.selection.has(c.id));
@@ -843,14 +955,43 @@ $("xfade").oninput = e => { S.crossfade = +e.target.value; renderSide(); };
 $("xfade").onchange = e => e.target.blur();
 $("audioChk").onchange = e => { S.videoAudio = e.target.checked; E.slots.forEach(v => v.muted = !S.videoAudio); e.target.blur(); };
 
-// Selection, double-click, right-click
-const list = $("list");
+// Pop-up menus (right-click and the columns' ⋯ button). Items: [label, action or null, tooltip?] or "-".
+const ctx = $("ctx");
+function hideCtx() { ctx.style.display = "none"; }
+function showMenu(items, x, y) {
+  ctx.innerHTML = "";
+  for (const it of items) {
+    const d = document.createElement("div");
+    if (it === "-") { d.className = "msep"; }
+    else {
+      d.className = "mi" + (it[1] ? "" : " off"); d.textContent = it[0];
+      if (it[2]) d.title = it[2];
+      if (it[1]) d.onclick = () => { hideCtx(); it[1](); };
+    }
+    ctx.appendChild(d);
+  }
+  ctx.style.display = "block";
+  ctx.style.left = Math.min(x, innerWidth - ctx.offsetWidth - 8) + "px";
+  ctx.style.top = Math.min(y, innerHeight - ctx.offsetHeight - 8) + "px";
+}
+document.addEventListener("mousedown", e => { if (!ctx.contains(e.target)) hideCtx(); if (!e.target.closest(".menu")) closeMenus(); });
+// Renaming: the name turns into a text field until Return, Esc or a click elsewhere
+function startRename(id) {
+  renamingCol = id; renderBoard();
+  const inp = $("board").querySelector(`.colname[data-col="${id}"]`);
+  if (inp) { inp.focus(); inp.select(); }
+}
+function finishRename() { if (renamingCol == null) return; renamingCol = null; renderAll(); }
+
+// ---------- The board: selection, double-click, menus, column names ----------
+const board = $("board");
 // Double-click is detected here (two presses on the same row within 0.45 s): rows are redrawn on each press,
 // and the browser doesn't send a dblclick event when the row under the mouse was replaced in between.
 let lastPress = { id: null, t: 0 };
-list.addEventListener("mousedown", e => {
+board.addEventListener("mousedown", e => {
+  if (e.target.closest(".colhead, .addcol, [data-addto]")) return;
   const row = e.target.closest(".row");
-  if (!row) { if (e.button === 0) { S.selection.clear(); renderList(); } return; }
+  if (!row) { if (e.button === 0 && S.selection.size) { S.selection.clear(); renderList(); } return; }
   const id = +row.dataset.id;
   if (e.button === 2) { if (!S.selection.has(id)) { S.selection = new Set([id]); anchorId = id; renderList(); } return; }
   const now = performance.now(), plain = !(e.shiftKey || e.ctrlKey || e.metaKey);
@@ -871,10 +1012,8 @@ list.addEventListener("mousedown", e => {
   renderList();
 });
 
-
-const ctx = $("ctx");
-function hideCtx() { ctx.style.display = "none"; }
-list.addEventListener("contextmenu", e => {
+board.addEventListener("contextmenu", e => {
+  if (!e.target.closest(".row")) return;
   e.preventDefault();
   const ids = [...S.selection]; if (!ids.length) return;
   const rows = S.cues.filter(c => S.selection.has(c.id));
@@ -894,61 +1033,82 @@ list.addEventListener("contextmenu", e => {
     const all = rows.every(c => c.isLoop);
     items.push([all ? "Use as Videos" : "Use as Loops", () => setLoopRows(new Set(ids), !all)], "-");
   }
-  items.push(["Show in Finder", null], ["Remove", () => removeIds(new Set(ids))]);
-  ctx.innerHTML = "";
-  for (const it of items) {
-    const d = document.createElement("div");
-    if (it === "-") { d.className = "msep"; }
-    else {
-      d.className = "mi" + (it[1] ? "" : " off"); d.textContent = it[0];
-      if (!it[1]) d.title = "Works in the Mac app";
-      else d.onclick = () => { hideCtx(); it[1](); };
-    }
-    ctx.appendChild(d);
+  const from = new Set(rows.map(colOf));
+  const targets = S.columns.filter(k => !(from.size === 1 && from.has(k.id)));
+  if (S.columns.length > 1 && targets.length) {
+    for (const k of targets) items.push([`Move to Column “${colName(k.id)}”`, () => moveRows(new Set(ids), k.id, null)]);
+    items.push("-");
   }
-  ctx.style.display = "block";
-  ctx.style.left = Math.min(e.clientX, innerWidth - 290) + "px";
-  ctx.style.top = Math.min(e.clientY, innerHeight - ctx.offsetHeight - 8) + "px";
+  items.push(["Show in Finder", null, "Works in the Mac app"], ["Remove", () => removeIds(new Set(ids))]);
+  showMenu(items, e.clientX, e.clientY);
 });
-document.addEventListener("mousedown", e => { if (!ctx.contains(e.target)) hideCtx(); if (!e.target.closest(".menu")) closeMenus(); });
 
-// Drag to reorder + drop files from Explorer/Finder
+board.addEventListener("click", e => {
+  const m = e.target.closest(".colmenu");
+  if (m) {
+    const id = +m.dataset.col, i = S.columns.findIndex(k => k.id === id), n = S.columns.length, r = m.getBoundingClientRect();
+    showMenu([["Add Videos to This Column…", () => chooseVideos(id)],
+              ["Add Loop to the Top of This Column…", () => chooseLoop({ row: true, col: id, at: 0 })], "-",
+              ["Rename", () => startRename(id)],
+              ["Move Column Left", i > 0 ? () => moveColumn(id, -1) : null],
+              ["Move Column Right", i < n - 1 ? () => moveColumn(id, 1) : null], "-",
+              ["Remove Column (its videos move to the next column over)", n > 1 ? () => removeColumn(id) : null]],
+             r.left, r.bottom + 4);
+    return;
+  }
+  if (e.target.closest("#addColBtn")) { startRename(addColumn()); return; }
+  const a = e.target.closest("[data-addto]");
+  if (a) chooseVideos(+a.dataset.addto);
+});
+board.addEventListener("input", e => { if (e.target.classList.contains("colname")) renameColumn(+e.target.dataset.col, e.target.value); });
+board.addEventListener("dblclick", e => { const t = e.target.closest(".coltitle"); if (t) startRename(+t.dataset.col); });
+board.addEventListener("focusout", e => { if (e.target.classList?.contains("colname")) setTimeout(finishRename); });
+board.addEventListener("keydown", e => {
+  if (e.target.classList.contains("colname") && (e.key === "Enter" || e.key === "Escape")) { e.preventDefault(); finishRename(); }
+});
+
+// Drag to reorder or to another column + drop files from Explorer/Finder
 let dragIds = null;
-const line = () => $("insertLine");
-function dropIndex(y) {
+const dropList = el => el.closest(".collist, .colempty");
+function dropIndexIn(list, y) {
   const rows = [...list.querySelectorAll(".row")];
   for (let i = 0; i < rows.length; i++) { const r = rows[i].getBoundingClientRect(); if (y < r.top + r.height / 2) return i; }
   return rows.length;
 }
-function showLine(i) {
-  const rows = [...list.querySelectorAll(".row")];
+function hideDropMarks() {
+  board.querySelectorAll(".insert-line").forEach(l => l.style.display = "none");
+  board.querySelectorAll(".colempty.target").forEach(t => t.classList.remove("target"));
+}
+function showLineIn(list, i) {
+  const rows = [...list.querySelectorAll(".row")], line = list.querySelector(".insert-line");
   const lr = list.getBoundingClientRect();
   let y;
-  if (!rows.length) y = 4;
-  else if (i < rows.length) y = rows[i].getBoundingClientRect().top - lr.top + list.scrollTop - 1;
+  if (i < rows.length) y = rows[i].getBoundingClientRect().top - lr.top + list.scrollTop - 1;
   else { const r = rows[rows.length - 1].getBoundingClientRect(); y = r.bottom - lr.top + list.scrollTop - 1; }
-  line().style.top = y + "px"; line().style.display = "block";
+  line.style.top = y + "px"; line.style.display = "block";
 }
-list.addEventListener("dragstart", e => {
+board.addEventListener("dragstart", e => {
   const row = e.target.closest(".row"); if (!row) return;
   const id = +row.dataset.id;
   dragIds = S.selection.has(id) ? new Set(S.selection) : new Set([id]);
   e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "videoplayer");
-  setTimeout(() => list.querySelectorAll(".row").forEach(r => dragIds?.has(+r.dataset.id) && r.classList.add("dragging")));
+  setTimeout(() => board.querySelectorAll(".row").forEach(r => dragIds?.has(+r.dataset.id) && r.classList.add("dragging")));
 });
-list.addEventListener("dragend", () => { dragIds = null; line().style.display = "none"; renderList(); });
-list.addEventListener("dragover", e => { e.preventDefault(); e.dataTransfer.dropEffect = dragIds ? "move" : "copy"; showLine(dropIndex(e.clientY)); });
-list.addEventListener("dragleave", e => { if (!list.contains(e.relatedTarget)) line().style.display = "none"; });
-list.addEventListener("drop", e => {
-  e.preventDefault(); line().style.display = "none";
-  const i = dropIndex(e.clientY);
-  if (dragIds) { moveIds(dragIds, i); dragIds = null; }
-  else if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files, i);
+board.addEventListener("dragend", () => { dragIds = null; hideDropMarks(); renderList(); });
+board.addEventListener("dragover", e => {
+  const list = dropList(e.target); if (!list) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = dragIds ? "move" : "copy";
+  hideDropMarks();
+  if (list.classList.contains("colempty")) list.classList.add("target"); else showLineIn(list, dropIndexIn(list, e.clientY));
 });
-const empty = $("empty");
-empty.addEventListener("dragover", e => { e.preventDefault(); empty.classList.add("target"); });
-empty.addEventListener("dragleave", () => empty.classList.remove("target"));
-empty.addEventListener("drop", e => { e.preventDefault(); empty.classList.remove("target"); addFiles(e.dataTransfer.files); });
+board.addEventListener("dragleave", e => { if (!board.contains(e.relatedTarget)) hideDropMarks(); });
+board.addEventListener("drop", e => {
+  const list = dropList(e.target); if (!list) return;
+  e.preventDefault(); hideDropMarks();
+  const col = +list.dataset.col, i = list.classList.contains("colempty") ? 0 : dropIndexIn(list, e.clientY);
+  if (dragIds) { moveRows(dragIds, col, i); dragIds = null; }
+  else if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files, col, i);
+});
 // Stop the browser from opening a file dropped anywhere else
 window.addEventListener("dragover", e => e.preventDefault());
 window.addEventListener("drop", e => e.preventDefault());
@@ -976,7 +1136,7 @@ document.addEventListener("keydown", e => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "o") { e.preventDefault(); chooseVideos(); }
     return;
   }
-  if (e.target.matches?.("input[type=text]")) return;
+  if (e.target.tagName === "INPUT" && e.target.type === "text") return;   // typing a column name
   switch (e.key) {
     case " ": case "ArrowRight": case "PageDown": e.preventDefault(); next(); return;
     case "ArrowLeft": case "PageUp": e.preventDefault(); armPrevious(); return;

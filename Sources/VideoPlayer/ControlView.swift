@@ -21,7 +21,6 @@ struct SetlistPane: View {
     @EnvironmentObject var setlist: Setlist
     @EnvironmentObject var engine: PlaybackEngine
     @Binding var selection: Set<UUID>
-    @FocusState private var editingColumn: UUID?
 
     private var selectedRows: [Cue] { setlist.cues.filter { selection.contains($0.id) } }
 
@@ -73,11 +72,10 @@ struct SetlistPane: View {
                 ScrollView(.horizontal) {
                     HStack(alignment: .top, spacing: 10) {
                         ForEach(setlist.columns) { column in
-                            ColumnView(column: column, layout: layout, compact: width < 430,
-                                       selection: $selection, editingColumn: $editingColumn)
+                            ColumnView(column: column, layout: layout, compact: width < 430, selection: $selection)
                                 .frame(width: width)
                         }
-                        AddColumnTile { editingColumn = setlist.addColumn() }
+                        AddColumnTile { setlist.renamingColumn = setlist.addColumn() }
                             .frame(width: Self.addTileWidth)
                     }
                     .padding(10)
@@ -86,7 +84,7 @@ struct SetlistPane: View {
             }
 
             Divider()
-            Text("Drag to reorder or to another column · click a column's name to rename it · double-click to play a video or show a loop · right-click for more")
+            Text("Drag to reorder or to another column · double-click a column's name to rename it · double-click a video to play it (or a loop to show it) · right-click for more")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(8)
@@ -102,7 +100,15 @@ struct ColumnView: View {
     let layout: SetlistLayout
     let compact: Bool
     @Binding var selection: Set<UUID>
-    var editingColumn: FocusState<UUID?>.Binding
+    @FocusState private var nameFocused: Bool
+
+    private var renaming: Bool { setlist.renamingColumn == column.id }
+
+    private func finishRenaming() {
+        guard renaming else { return }
+        setlist.renamingColumn = nil
+        showLog("Column named \(setlist.columnName(column.id))")
+    }
 
     var body: some View {
         let rows = setlist.cues(in: column.id)
@@ -110,16 +116,25 @@ struct ColumnView: View {
         let index = setlist.columns.firstIndex { $0.id == column.id } ?? 0
         VStack(spacing: 0) {
             HStack(spacing: 6) {
-                TextField("Name this column", text: Binding(get: { column.name },
-                                                            set: { setlist.renameColumn(column.id, to: $0) }))
-                    .textFieldStyle(.plain)
-                    .font(.headline)
-                    .focused(editingColumn, equals: column.id)
-                    .onSubmit {
-                        showLog("Column named \(setlist.columnName(column.id))")
-                        editingColumn.wrappedValue = nil   // back to the show keys (Space, arrows …)
-                    }
-                    .help("Click to rename this column")
+                if renaming {
+                    TextField("Name this column", text: Binding(get: { column.name },
+                                                                set: { setlist.renameColumn(column.id, to: $0) }))
+                        .textFieldStyle(.plain)
+                        .font(.headline)
+                        .focused($nameFocused)
+                        .onSubmit { finishRenaming() }   // Return: back to the show keys (Space, arrows …)
+                        .onAppear { DispatchQueue.main.async { nameFocused = true } }
+                        .onChange(of: nameFocused) { focused in if !focused { finishRenaming() } }
+                } else {
+                    Text(setlist.columnName(column.id))
+                        .font(.headline)
+                        .foregroundStyle(column.name.isEmpty ? Color.secondary : Color.primary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) { setlist.renamingColumn = column.id }
+                        .help("Double-click to rename this column")
+                }
                 Text("\(videos.count) \(videos.count == 1 ? "video" : "videos")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -128,7 +143,7 @@ struct ColumnView: View {
                     Button("Add Videos to This Column…") { setlist.chooseVideos(into: column.id) }
                     Button("Add Loop to the Top of This Column…") { setlist.chooseLoopRow(column: column.id, at: 0) }
                     Divider()
-                    Button("Rename") { editingColumn.wrappedValue = column.id }
+                    Button("Rename") { setlist.renamingColumn = column.id }
                     Button("Move Column Left") { setlist.moveColumn(column.id, by: -1) }
                         .disabled(index == 0)
                     Button("Move Column Right") { setlist.moveColumn(column.id, by: 1) }
@@ -342,8 +357,17 @@ struct CueRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(cue.title).font(.headline).lineLimit(1)
                 HStack(spacing: 8) {
-                    Text(formatTime(cue.duration)).monospacedDigit()
-                    if let loop = cue.loop {
+                    Text(formatTime(cue.duration)).monospacedDigit().fixedSize()
+                    if compact {
+                        // Narrow column: just which loop follows
+                        if cue.loop != nil {
+                            Label("own loop", systemImage: "repeat").lineLimit(1)
+                        } else if let part = loopAbove {
+                            Label("Loop \(part.number)", systemImage: "repeat").lineLimit(1)
+                        } else {
+                            Label("no loop", systemImage: "repeat").lineLimit(1)
+                        }
+                    } else if let loop = cue.loop {
                         Label("then its own loop: \(loop.name)", systemImage: "repeat").lineLimit(1)
                     } else if let part = loopAbove {
                         Label("then Loop \(part.number): \(part.title)", systemImage: "repeat").lineLimit(1)
@@ -389,7 +413,7 @@ struct LoopRow: View {
         guard let part, !part.videos.isEmpty else {
             return compact ? "No videos below it yet" : "No videos below it yet: drag it above the first video it should follow"
         }
-        return "Plays after " + videosText(part.videos)
+        return (compact ? "After " : "Plays after ") + videosText(part.videos)
     }
 
     var body: some View {
@@ -437,6 +461,8 @@ struct StateBadge: View {
     var body: some View {
         Text(text)
             .font(.caption.bold())
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(color, in: Capsule())
