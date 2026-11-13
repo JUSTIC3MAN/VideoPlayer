@@ -354,6 +354,9 @@ struct CueRow: View {
                 .frame(width: compact ? 22 : 32, alignment: .trailing)
             Thumbnail(image: setlist.thumbnails[cue.file.path])
                 .frame(width: compact ? 72 : 112, height: compact ? 40 : 63)
+                .overlay(alignment: .bottom) {
+                    if compact { VStack(spacing: 1) { badges }.padding(.bottom, 2) }   // narrow column: on the picture
+                }
             VStack(alignment: .leading, spacing: 3) {
                 Text(cue.title).font(.headline).lineLimit(1)
                 HStack(spacing: 8) {
@@ -384,20 +387,24 @@ struct CueRow: View {
                 }
             }
             Spacer(minLength: 8)
-            if engine.playingCueID == cue.id {
-                if engine.phase == .playing {
-                    StateBadge(text: engine.paused ? "PAUSED" : "PLAYING",
-                               color: engine.paused ? .yellow : .green,
-                               textColor: engine.paused ? .black : .white)
-                } else {
-                    StateBadge(text: "LOOP AFTER", color: .orange)
-                }
-            }
-            if engine.armedCueID == cue.id {
-                StateBadge(text: "NEXT", color: .blue)
-            }
+            if !compact { badges }
         }
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder private var badges: some View {
+        if engine.playingCueID == cue.id {
+            if engine.phase == .playing {
+                StateBadge(text: engine.paused ? "PAUSED" : "PLAYING",
+                           color: engine.paused ? .yellow : .green,
+                           textColor: engine.paused ? .black : .white, small: compact)
+            } else {
+                StateBadge(text: "LOOP AFTER", color: .orange, small: compact)
+            }
+        }
+        if engine.armedCueID == cue.id {
+            StateBadge(text: "NEXT", color: .blue, small: compact)
+        }
     }
 }
 
@@ -425,11 +432,15 @@ struct LoopRow: View {
             Thumbnail(image: setlist.thumbnails[cue.file.path])
                 .frame(width: compact ? 72 : 112, height: compact ? 40 : 63)
                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.orange, lineWidth: 2))
+                .overlay(alignment: .bottom) {
+                    if compact { badge.padding(.bottom, 2) }   // narrow column: on the picture
+                }
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text("LOOP \(part?.number ?? 0)")
                         .font(.caption.bold())
                         .foregroundStyle(.orange)
+                        .fixedSize()
                     Text(cue.title).font(.headline).lineLimit(1)
                 }
                 Text(coverage)
@@ -443,13 +454,17 @@ struct LoopRow: View {
                 }
             }
             Spacer(minLength: 8)
-            if engine.phase == .loop && engine.loopRowID == cue.id {
-                StateBadge(text: engine.paused ? "PAUSED" : "ON SCREEN",
-                           color: engine.paused ? .yellow : .orange,
-                           textColor: engine.paused ? .black : .white)
-            }
+            if !compact { badge }
         }
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder private var badge: some View {
+        if engine.phase == .loop && engine.loopRowID == cue.id {
+            StateBadge(text: engine.paused ? "PAUSED" : "ON SCREEN",
+                       color: engine.paused ? .yellow : .orange,
+                       textColor: engine.paused ? .black : .white, small: compact)
+        }
     }
 }
 
@@ -457,14 +472,16 @@ struct StateBadge: View {
     let text: String
     let color: Color
     var textColor: Color = .white
+    /// Smaller, for on top of a picture in a narrow column.
+    var small = false
 
     var body: some View {
         Text(text)
-            .font(.caption.bold())
+            .font(small ? .system(size: 9, weight: .bold) : .caption.bold())
             .lineLimit(1)
             .fixedSize()
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
+            .padding(.horizontal, small ? 5 : 8)
+            .padding(.vertical, small ? 1.5 : 3)
             .background(color, in: Capsule())
             .foregroundStyle(textColor)
     }

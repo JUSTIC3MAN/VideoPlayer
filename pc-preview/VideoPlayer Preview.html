@@ -116,6 +116,12 @@
   .col.compact .num { width: 22px; font-size: 13px; }
   .col.compact .row.loop .num { font-size: 16px; }
   .col.compact .thumb { width: 72px; height: 40px; font-size: 12px; }
+  /* Narrow column: the badges sit on the picture instead of at the end of the row */
+  .tw { position: relative; flex: none; display: flex; }
+  .tb { position: absolute; left: 0; right: 0; bottom: 2px; display: none; flex-direction: column; align-items: center; gap: 1px; }
+  .tb .badge { font-size: 8px; padding: 1px 5px; }
+  .col.compact .tb { display: flex; }
+  .col.compact .row > .badge { display: none; }
   .foot { font-size: 10px; color: var(--text2); padding: 8px; text-align: center; }
 
   /* Side panel */
@@ -749,7 +755,7 @@ function rowElement(c, L) {
     const onScreen = E.phase === "loop" && E.loopRowId === c.id;
     const b = onScreen ? (E.paused ? badge("PAUSED", "var(--yellow)", "#000") : badge("ON SCREEN", "var(--orange)")) : "";
     row.innerHTML = `
-      <div class="num">∞</div>${thumbHtml(c)}
+      <div class="num">∞</div><div class="tw">${thumbHtml(c)}<div class="tb">${b}</div></div>
       <div class="meta"><div class="ttl"><span class="lp">LOOP ${part.number}</span>${esc(c.title)}</div><div class="sub"><span>${cover}</span></div></div>
       ${b}`;
   } else {
@@ -761,7 +767,7 @@ function rowElement(c, L) {
       : badge("LOOP AFTER", "var(--orange)");
     if (E.armedId === c.id) badges += badge("NEXT", "var(--accent)");
     row.innerHTML = `
-      <div class="num">${L.videoNumber.get(c.id)}</div>${thumbHtml(c)}
+      <div class="num">${L.videoNumber.get(c.id)}</div><div class="tw">${thumbHtml(c)}<div class="tb">${badges}</div></div>
       <div class="meta"><div class="ttl">${esc(c.title)}</div><div class="sub"><span>${formatTime(c.duration)}</span><span>${loopLabel}</span></div></div>
       ${badges}`;
   }
