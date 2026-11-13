@@ -12,7 +12,7 @@ It's built for the screen behind the band. There's a control window on the lapto
 - **Pause.** Freezes the video or loop on screen, and its sound. Press again to carry on.
 - **Seek bar.** Click or drag the time bar under the preview to jump to any point in the playing video.
 - **Loops for each part of the show.** Any video in the setlist can be a loop: select it and click **Use as Loop** (or right-click it). A loop plays after every video below it, up to the next loop, with no gap until you press Next. So with a loop above videos 1–4 and another above videos 5–7, the first loop plays between videos 1–4 and the second between videos 5–7. See [Loops](#loops-a-different-loop-for-each-part-of-the-show) below.
-- **Xbox controller.** A = Next, B = Previous, X = Loop, Y = Pause. See [Xbox controller](#xbox-controller) below.
+- **Xbox controller.** A = Next, B = Previous, Y = Pause. See [Xbox controller](#xbox-controller) below.
 - **Output.** A full-screen window on the screen you pick, with no mouse pointer. The control window has a live preview of exactly what's on the output.
 - **Crossfade.** 0–3 seconds between videos and into the loop (0 = hard cut). A second press of Next during a fade is ignored, so a double-tap on a clicker can't skip a song.
 - **Blackout, Stop, Back One.** Blackout fades the screen to black. Stop fades out and resets NEXT to the first video. Back One moves NEXT up one video without playing anything.
@@ -39,7 +39,7 @@ Example: the first 4 videos with one artist's logo loop, then the next 3 with an
 - **Make a loop:** select any video in the setlist and click **Use as Loop** (above the setlist), or right-click it and choose *Use as Loop*. *Use as Video* turns it back.
 - **Add a loop from a file:** select the first video of a part and click **Add Loop…** (in the Loops box). The loop goes above that video. With nothing selected it goes at the top (first loop) or at the end.
 - **Choose how many videos a loop covers:** drag the loop row up or down. It covers everything below it until the next loop row.
-- **Show a loop now:** double-click its row (or right-click → *Show This Loop Now*). It stays up until the next video plays, or until you press L / X, which go back to the songs' loop.
+- **Show a loop now:** double-click its row (or right-click → *Show This Loop Now*). It stays up until the next video plays.
 - **One video with its own loop:** right-click the video → *Choose Loop for After This Video…*. *Use the Loop Above It* undoes that.
 - Next, Previous and Back One skip loop rows, so loops are never played as songs. Videos with no loop row above them go to black when they end; the Loops box warns about this.
 - The Loops box (right side) lists every loop and the videos it covers. Click one to find it in the setlist.
@@ -50,12 +50,11 @@ Example: the first 4 videos with one artist's logo loop, then the next 3 with an
 |---|---|
 | A | Next video |
 | B | Previous video |
-| X | Show the loop for the current song (same as L) |
 | Y | Pause / resume |
 
 **Pair it once:** press the Xbox button to turn the controller on, then hold the pair button on its top edge until the Xbox button flashes fast. On the Mac, open **System Settings → Bluetooth** and click **Connect** next to the controller. After that it connects by itself whenever it's turned on.
 
-The control window shows the controller's name under the transport buttons when it's connected. Supported: Xbox Wireless Controller (model 1708 with Bluetooth, and Series X|S), Xbox Elite Series 2 and Xbox Adaptive Controller. PlayStation controllers work too, with the buttons in the same places (✕ Next, ○ Previous, □ Loop, △ Pause). The buttons also work while another app (Ableton, say) is in front; on some older macOS versions they only work while VideoPlayer is the front app. A second press of A or B during a fade is ignored, just like Next.
+The control window shows the controller's name under the transport buttons when it's connected. Supported: Xbox Wireless Controller (model 1708 with Bluetooth, and Series X|S), Xbox Elite Series 2 and Xbox Adaptive Controller. PlayStation controllers work too, with the buttons in the same places (✕ Next, ○ Previous, △ Pause). The buttons also work while another app (Ableton, say) is in front; on some older macOS versions they only work while VideoPlayer is the front app. A second press of A or B during a fade is ignored, just like Next.
 
 ## Keys (presentation clickers work too)
 
@@ -64,7 +63,7 @@ The control window shows the controller's name under the transport buttons when 
 | Space, →, Page Down | Next video |
 | ←, Page Up | Move NEXT back one (doesn't play) |
 | P | Pause / resume |
-| L | Show the loop for the current song now: the playing (or last) video's loop; before the show, the loop of the part NEXT is in |
+| L | Show the loop visual now |
 | B or . | Blackout on / off |
 | F | Show / hide the output |
 | Esc | Hide the output |
