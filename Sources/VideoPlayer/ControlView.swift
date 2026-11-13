@@ -30,16 +30,20 @@ struct SetlistPane: View {
         let selectionIsLoops = !selectedRows.isEmpty && selectedRows.allSatisfy { $0.isLoop }
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Text("Setlist").font(.title2.bold())
+                Text("Setlist").font(.title2.bold()).fixedSize()
+                // On a narrow window the count gives way first, so the buttons keep their full names.
                 Text("\(layout.videoCount) videos · \(layout.loopCount) \(layout.loopCount == 1 ? "loop" : "loops") · \(formatTime(total))")
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                Spacer()
+                    .layoutPriority(-1)
+                Spacer(minLength: 0)
                 Button { setlist.chooseVideos() } label: { Label("Add Videos", systemImage: "plus") }
+                    .fixedSize()
                 Button { setlist.setLoopRows(selection, !selectionIsLoops) } label: {
                     Label(selectionIsLoops ? "Use as Video" : "Use as Loop",
                           systemImage: selectionIsLoops ? "film" : "infinity")
                 }
+                .fixedSize()
                 .disabled(selection.isEmpty)
                 .help(selectionIsLoops ? "Turns the selected loops back into videos"
                                        : "Turns the selected videos into loops. A loop plays after the videos below it.")
@@ -47,6 +51,7 @@ struct SetlistPane: View {
                     setlist.remove(ids: selection)
                     selection.removeAll()
                 } label: { Label("Remove", systemImage: "minus") }
+                .fixedSize()
                 .disabled(selection.isEmpty)
             }
             .padding(12)
@@ -79,7 +84,7 @@ struct SetlistPane: View {
             }
 
             Divider()
-            Text("Drag rows to reorder · drop videos from Finder · double-click plays a video (or shows a loop) now · right-click for more")
+            Text("Drag to reorder · drop videos from Finder · double-click to play a video or show a loop · right-click for more")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(8)

@@ -83,34 +83,21 @@ jobs:
           shot() { screencapture -x "shots/$1.png"; }
           front() { osascript -e 'tell application "System Events" to tell process "VideoPlayer" to set frontmost to true' >> steps.log 2>&1; }
           key()  { front; osascript -e "tell application \"System Events\" to $1" >> steps.log 2>&1; }
-          # Where things are: read from the app's accessibility info (positions.applescript), so the
-          # clicks land on the buttons wherever the layout puts them.
-          where() { osascript .github/ui-test/positions.applescript > positions.txt 2>> steps.log; }
-          button() {  # middle of the button whose name or description is exactly $1 (else contains $1)
-            awk -F'|' -v t="$1" '$1=="BUTTON" && ($2==t || $3==t) { printf "%d,%d\n", $4+$6/2, $5+$7/2; f=1; exit }
-              END { if (!f) exit 1 }' positions.txt ||
-            awk -F'|' -v t="$1" '$1=="BUTTON" && (index($2,t) || index($3,t)) { printf "%d,%d\n", $4+$6/2, $5+$7/2; exit }' positions.txt
-          }
-          row() {  # setlist row $1 (1 = top), at the title
-            awk -F'|' -v n="$1" '$1=="ROW" { c++; if (c==n) { printf "%d,%d\n", $4+210, $5+$7/2; exit } }' positions.txt
-          }
-          seek75() {  # the seek bar sits just above the NEXT button and is as wide as it
-            awk -F'|' '$1=="BUTTON" && (index($2,"NEXT") || index($3,"NEXT")) { printf "%d,%d\n", $4+$6*0.75, $5-23; exit }' positions.txt
-          }
-          click() { local p; p="$2"; [ -z "$p" ] && { step "NOT FOUND: $1"; return; }; front; sleep 0.3; cliclick "c:$p" >> steps.log 2>&1; step "clicked $1 at $p"; }
-          dclick() { local p; p="$2"; [ -z "$p" ] && { step "NOT FOUND: $1"; return; }; front; sleep 0.3; cliclick "dc:$p" >> steps.log 2>&1; step "double-clicked $1 at $p"; }
+          # Real mouse clicks at the button positions (screen points; the window opens at the same place every run)
+          click() { front; sleep 0.3; cliclick "c:$2" >> steps.log 2>&1; step "clicked $1 at $2"; }
+          dclick() { front; sleep 0.3; cliclick "dc:$2" >> steps.log 2>&1; step "double-clicked $1 at $2"; }
+          NEXT=775,450; PREVIOUS=684,507; PAUSE=787,507; LOOP=878,507; BACKONE=680,539; BLACKOUT=793,539; STOP=888,539
+          SEEK75=884,391; ADD=252,87; USELOOP=370,87
+          ROW2=220,240; ROW4=220,398; ROW6=220,556     # setlist rows are 79 points apart
 
           build/VideoPlayer.app/Contents/MacOS/VideoPlayer > app.log 2>&1 &
           sleep 8
           front; sleep 1
           shot 01_opened
-          where
-          echo "--- positions"; cat positions.txt; echo "---"
-          cp positions.txt shots/positions.txt
 
           step "KEYS"
           key "key code 49";  sleep 0.7                 # Space: Next
-          click "seek bar at 75%" "$(seek75)"; sleep 0.4; shot 02_space_plays_red_then_seek_75
+          click "seek bar at 75%" $SEEK75; sleep 0.4; shot 02_space_plays_red_then_seek_75
           sleep 3.5;                                    shot 03_red_ended_loop1_on_screen
           key "key code 124"; sleep 1                   # Right arrow: Next
           key "keystroke \"p\""; sleep 1;               shot 04_blue_paused_with_p
@@ -120,26 +107,26 @@ jobs:
           key "key code 49";  sleep 3.8;                shot 08_green_ended_loop2_on_screen
 
           step "BUTTONS"
-          click "Previous" "$(button Previous)";   sleep 1;   shot 09_previous_plays_blue
-          click "Pause" "$(button Pause)";         sleep 1;   shot 10_pause_button_paused
-          click "Resume" "$(button Pause)";        sleep 3.8; shot 11_resume_then_blue_ended_loop1
-          click "Stop" "$(button Stop)";           sleep 1.5; shot 12_click_stop_black
-          click "NEXT" "$(button NEXT)";           sleep 1.5; shot 13_click_next_plays_red
+          click "Previous" $PREVIOUS;   sleep 1;   shot 09_previous_plays_blue
+          click "Pause" $PAUSE;         sleep 1;   shot 10_pause_button_paused
+          click "Resume" $PAUSE;        sleep 3.8; shot 11_resume_then_blue_ended_loop1
+          click "Stop" $STOP;           sleep 1.5; shot 12_click_stop_black
+          click "NEXT" $NEXT;           sleep 1.5; shot 13_click_next_plays_red
           sleep 3.5;                                          shot 14_red_ended_loop1
-          click "NEXT" "$(button NEXT)";           sleep 0.8
-          click "Blackout" "$(button Blackout)";   sleep 1;   shot 15_next_blue_then_blackout_on
+          click "NEXT" $NEXT;           sleep 0.8
+          click "Blackout" $BLACKOUT;   sleep 1;   shot 15_next_blue_then_blackout_on
           sleep 3.5;                                          shot 16_blue_ended_screen_stays_black
-          click "Blackout" "$(button Blackout)";   sleep 1;   shot 17_blackout_off_shows_loop
-          click "Loop" "$(button Loop)";           sleep 1;   shot 18_click_loop
-          click "Back One" "$(button 'Back One')"; sleep 1;   shot 19_back_one_next_moves_up
-          dclick "row 6 (yellow)" "$(row 6)";      sleep 4.3; shot 20_yellow_ended_its_own_loop3
-          dclick "row 4 (loop_2)" "$(row 4)";      sleep 1.5; shot 21_doubleclick_loop2_shows_it_now
-          click "row 2 (red)" "$(row 2)";          sleep 0.5
-          click "Use as Loop" "$(button 'Use as Loop')"; sleep 1; shot 22_red_turned_into_a_loop
-          click "Use as Video" "$(button 'Use as Loop')"; sleep 1; shot 23_red_back_to_a_video
+          click "Blackout" $BLACKOUT;   sleep 1;   shot 17_blackout_off_shows_loop
+          click "Loop" $LOOP;           sleep 1;   shot 18_click_loop
+          click "Back One" $BACKONE; sleep 1;   shot 19_back_one_next_moves_up
+          dclick "row 6 (yellow)" $ROW6;      sleep 4.3; shot 20_yellow_ended_its_own_loop3
+          dclick "row 4 (loop_2)" $ROW4;      sleep 1.5; shot 21_doubleclick_loop2_shows_it_now
+          click "row 2 (red)" $ROW2;          sleep 0.5
+          click "Use as Loop" $USELOOP; sleep 1; shot 22_red_turned_into_a_loop
+          click "Use as Video" $USELOOP; sleep 1; shot 23_red_back_to_a_video
 
           step "ADD VIDEOS (file window, pick a video by its path)"
-          click "Add Videos" "$(button 'Add Videos')"; sleep 3; shot 24_add_videos_after_3s
+          click "Add Videos" $ADD; sleep 3; shot 24_add_videos_after_3s
           sleep 5;                                            shot 25_add_videos_after_8s
           key "keystroke \"g\" using {command down, shift down}"; sleep 2
           key "keystroke \"$PWD/.github/test-media/song_blue.mp4\""; sleep 1; shot 26_go_to_file
@@ -153,11 +140,38 @@ jobs:
           echo "--- app log" >> steps.log; cat app.log >> steps.log
           cat steps.log
 
+          # The app's log must show every step above, in this order.
+          python3 - app.log <<'PY'
+          import sys
+          log = open(sys.argv[1], errors="replace").read().splitlines()
+          want = ['Play #1 "song_red"', "Loop visual: loop_bars",          # Space; part 1's loop
+                  'Play #2 "song_blue"', "Paused", "Resumed",              # Right arrow; P; P
+                  "Loop visual: loop_bars",
+                  'Play #3 "song_green"', "Loop visual: loop_2",           # Space; part 2's loop
+                  'Play #2 "song_blue"',                                   # Previous button
+                  "Paused", "Resumed", "Loop visual: loop_bars",           # Pause / Resume buttons
+                  "Stop", 'Play #1 "song_red"', "Loop visual: loop_bars",  # Stop; NEXT
+                  'Play #2 "song_blue"', "Blackout on", "Loop visual: loop_bars", "Blackout off",
+                  'Play #4 "song_yellow"', "Loop visual: loop_3",          # double-click; its own loop
+                  "Show loop now: loop_2",                                 # double-click a loop row
+                  "Now a loop: song_red", "Now a video: song_red",         # Use as Loop / Use as Video
+                  "Added 1 video(s)"]
+          i = 0
+          for line in log:
+              if i < len(want) and want[i] in line:
+                  i += 1
+          if i == len(want):
+              print(f"::notice title=Show log as expected::all {len(want)} steps happened in order")
+          else:
+              print(f"::error title=Show log differs::step {i + 1} of {len(want)} never happened: {want[i]}")
+              sys.exit(1)
+          PY
+
       - name: Publish screenshots and log to the ui-test pre-release
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          (cd shots && zip -q ../ui-test-shots.zip *.png positions.txt)
+          (cd shots && zip -q ../ui-test-shots.zip *.png)
           gh release view ui-test >/dev/null 2>&1 || gh release create ui-test --prerelease --title "UI test results (not an install)" --notes "Screenshots from the automated UI test. Install VideoPlayer from the latest release instead."
           gh release upload ui-test ui-test-shots.zip steps.log --clobber
