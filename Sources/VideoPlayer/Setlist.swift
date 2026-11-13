@@ -4,12 +4,12 @@ import AVFoundation
 import UniformTypeIdentifiers
 
 /// The setlist and show settings. Saved automatically, so the app reopens where you left off.
+///
+/// The setlist holds videos and loops. A loop row plays after every video below it, up to the next
+/// loop row, so the loops split the show into parts (for example videos 1–4 with one loop, videos 5–7
+/// with another).
 final class Setlist: ObservableObject {
     @Published var cues: [Cue] = [] { didSet { scheduleSave() } }
-    /// Loop 1, Loop 2, Loop 3 (nil = empty slot). After video 1 comes Loop 1, after video 2 Loop 2,
-    /// after video 3 Loop 3, after video 4 Loop 1 again, and so on. Empty slots are skipped.
-    @Published var loopSlots: [FileRef?] = Array(repeating: nil, count: Setlist.loopSlotCount) { didSet { scheduleSave() } }
-    static let loopSlotCount = 3
     @Published var crossfade: Double = 0.5 { didSet { scheduleSave() } }
     @Published var fillScreen = false { didSet { scheduleSave() } }
     @Published var videoAudio = true { didSet { scheduleSave() } }
@@ -48,7 +48,7 @@ final class Setlist: ObservableObject {
         let newCues = videos.map { Cue(file: FileRef(url: $0)) }
         let position = min(max(index ?? cues.count, 0), cues.count)
         cues.insert(contentsOf: newCues, at: position)
-        showLog("Added \(newCues.count) video(s); setlist now \(cues.count)")
+        showLog("Added \(newCues.count) video(s); setlist now \(cues.count) rows")
         for cue in newCues { loadInfo(cueID: cue.id, path: cue.file.path) }
     }
 
@@ -60,34 +60,55 @@ final class Setlist: ObservableObject {
         cues.move(fromOffsets: source, toOffset: destination)
     }
 
+    /// Turns rows into loops (isLoop true) or back into videos.
+    func setLoopRows(_ ids: Set<UUID>, _ isLoop: Bool) {
+        var changed = cues
+        var names: [String] = []
+        for i in changed.indices where ids.contains(changed[i].id) && changed[i].isLoop != isLoop {
+            changed[i].isLoop = isLoop
+            names.append(changed[i].title)
+        }
+        guard !names.isEmpty else { return }
+        cues = changed
+        showLog("\(isLoop ? "Now a loop" : "Now a video"): \(names.joined(separator: ", ")); loops: \(loopSummary())")
+    }
+
+    /// A video's own loop (right-click menu). nil = back to the loop above it.
     func setLoop(_ url: URL?, for cueID: UUID) {
         guard let i = cues.firstIndex(where: { $0.id == cueID }) else { return }
         cues[i].loop = url.map { FileRef(url: $0) }
         if let url { loadThumbnail(path: url.path) }
     }
 
-    func setLoopSlot(_ slot: Int, _ url: URL?) {
-        guard loopSlots.indices.contains(slot) else { return }
-        loopSlots[slot] = url.map { FileRef(url: $0) }
-        if let url { loadThumbnail(path: url.path) }
+    /// The loop that plays after a row, and the loop row it comes from (nil for a video's own loop).
+    /// A video uses its own loop if it has one, otherwise the nearest loop row above it; with no loop row
+    /// above it the screen goes black. Before any video has played (cueID nil) it is the first loop row.
+    func loopSource(cueID: UUID?) -> (ref: FileRef?, rowID: UUID?) {
+        guard let cueID, let i = cues.firstIndex(where: { $0.id == cueID }) else {
+            let first = cues.first { $0.isLoop }
+            return (first?.file, first?.id)
+        }
+        let cue = cues[i]
+        if cue.isLoop { return (cue.file, cue.id) }
+        if let own = cue.loop { return (own, nil) }
+        if let row = cues[..<i].last(where: { $0.isLoop }) { return (row.file, row.id) }
+        return (nil, nil)
     }
 
-    /// The loop that plays after a video: its own loop if it has one, otherwise Loops 1–3 in turn by the
-    /// video's place in the setlist (video 1 → Loop 1, 2 → Loop 2, 3 → Loop 3, 4 → Loop 1 …).
-    /// Before any video has played (cueID nil) it is the first loop.
     func loopFor(cueID: UUID?) -> FileRef? {
-        let filled = loopSlots.compactMap { $0 }
-        guard let cueID, let i = cues.firstIndex(where: { $0.id == cueID }) else { return filled.first }
-        if let own = cues[i].loop { return own }
-        return filled.isEmpty ? nil : filled[i % filled.count]
+        loopSource(cueID: cueID).ref
     }
 
-    /// Which loop slot (1–3) follows the video at this position. nil when it has its own loop or no loops are set.
-    func loopSlotNumber(forCueAt i: Int) -> Int? {
-        guard cues.indices.contains(i), cues[i].loop == nil else { return nil }
-        let filled = loopSlots.indices.filter { loopSlots[$0] != nil }
-        guard !filled.isEmpty else { return nil }
-        return filled[i % filled.count] + 1
+    /// For the log: "loop_bars (videos 1-2), loop_2 (videos 3-4)".
+    func loopSummary() -> String {
+        let layout = SetlistLayout(cues: cues)
+        let loops = cues.filter { $0.isLoop }.map { cue -> String in
+            guard let part = layout.parts[cue.id], let first = part.firstVideo, let last = part.lastVideo else {
+                return "\(cue.title) (no videos)"
+            }
+            return "\(cue.title) (videos \(first)-\(last))"
+        }
+        return loops.isEmpty ? "none" : loops.joined(separator: ", ")
     }
 
     // MARK: - Panels
@@ -104,16 +125,21 @@ final class Setlist: ObservableObject {
         if result == .OK { add(urls: panel.urls) }
     }
 
-    /// Choose a loop video for after one particular video (overrides the turn-taking loops).
+    /// Add Loop…: picks a video and puts it in the setlist as a loop row at `index` (above that row).
+    /// With no index: at the top if there are no loops yet (so it plays after every video), else at the end.
+    func chooseLoopRow(insertAt index: Int?) {
+        guard let url = pickOneVideo(title: "Choose a loop video") else { return }
+        let cue = Cue(file: FileRef(url: url), isLoop: true)
+        let position = index ?? (cues.contains { $0.isLoop } ? cues.count : 0)
+        cues.insert(cue, at: min(max(position, 0), cues.count))
+        loadInfo(cueID: cue.id, path: cue.file.path)
+        showLog("Added loop \(cue.title); loops: \(loopSummary())")
+    }
+
+    /// Choose a loop video for after one particular video (instead of the loop above it).
     func chooseLoop(for cueID: UUID) {
         guard let url = pickOneVideo(title: "Choose the loop for after this video") else { return }
         setLoop(url, for: cueID)
-    }
-
-    /// Choose the video for Loop 1, 2 or 3 (slot 0, 1, 2).
-    func chooseLoopSlot(_ slot: Int) {
-        guard let url = pickOneVideo(title: "Choose the video for Loop \(slot + 1)") else { return }
-        setLoopSlot(slot, url)
     }
 
     private func pickOneVideo(title: String) -> URL? {
@@ -147,8 +173,7 @@ final class Setlist: ObservableObject {
     // MARK: - Saving
 
     private func snapshot() -> ShowFile {
-        ShowFile(cues: cues, loopSlots: loopSlots, defaultLoop: loopSlots.compactMap { $0 }.first, crossfade: crossfade,
-                 fillScreen: fillScreen, videoAudio: videoAudio)
+        ShowFile(cues: cues, crossfade: crossfade, fillScreen: fillScreen, videoAudio: videoAudio)
     }
 
     private func write(to url: URL) {
@@ -175,19 +200,25 @@ final class Setlist: ObservableObject {
     private func load(from url: URL) {
         guard let data = try? Data(contentsOf: url),
               var show = try? JSONDecoder().decode(ShowFile.self, from: data) else { return }
+
+        // Setlists from before loop rows: Loop 1 (or version 1's single loop) becomes a loop row at the
+        // top, so it still plays after every video. Loops 2 and 3 go at the end, ready to be dragged
+        // above the first video of the part they should play in.
+        if show.version < 3 {
+            let old = (show.loopSlots ?? [show.defaultLoop]).compactMap { $0 }
+            if let first = old.first {
+                show.cues.insert(Cue(file: first, isLoop: true), at: 0)
+                show.cues += old.dropFirst().map { Cue(file: $0, isLoop: true) }
+                showLog("Moved the old loops into the setlist as loop rows: \(old.map(\.name).joined(separator: ", "))")
+            }
+        }
         for i in show.cues.indices {
             show.cues[i].file.refresh()
             show.cues[i].loop?.refresh()
         }
-        // Older setlists had a single loop: it becomes Loop 1.
-        var slots = show.loopSlots ?? [show.defaultLoop]
-        if slots.count < Self.loopSlotCount { slots += Array(repeating: nil, count: Self.loopSlotCount - slots.count) }
-        slots = Array(slots.prefix(Self.loopSlotCount))
-        for i in slots.indices { slots[i]?.refresh() }
 
         isLoading = true
         cues = show.cues
-        loopSlots = slots
         crossfade = show.crossfade
         fillScreen = show.fillScreen
         videoAudio = show.videoAudio
@@ -197,8 +228,8 @@ final class Setlist: ObservableObject {
             loadInfo(cueID: cue.id, path: cue.file.path)
             if let loop = cue.loop { loadThumbnail(path: loop.path) }
         }
-        for case let loop? in loopSlots { loadThumbnail(path: loop.path) }
-        showLog("Loaded setlist: \(cues.count) videos; loops: \(loopSlots.map { $0?.name ?? "-" }.joined(separator: ", "))")
+        let layout = SetlistLayout(cues: cues)
+        showLog("Loaded setlist: \(layout.videoCount) videos, \(layout.loopCount) loops: \(loopSummary())")
     }
 
     // MARK: - Durations and thumbnails (loaded in the background)

@@ -11,6 +11,7 @@ struct VideoPlayerApp: App {
                 .environmentObject(appDelegate.setlist)
                 .environmentObject(appDelegate.engine)
                 .environmentObject(appDelegate.output)
+                .environmentObject(appDelegate.gamepad)
                 .frame(minWidth: 1000, minHeight: 640)
         }
         .defaultSize(width: 1320, height: 820)
@@ -27,10 +28,13 @@ struct VideoPlayerApp: App {
                 Button("Save Setlist As…") { appDelegate.setlist.saveSetlistFile() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
             }
-            // Show controls live on plain keys (Space, arrows, L, B, F, Esc), handled in AppDelegate,
-            // so a presentation clicker works too. The menu lists them for reference.
+            // Show controls live on plain keys (Space, arrows, P, L, B, F, Esc), handled in AppDelegate,
+            // so a presentation clicker works too, and on a game controller (Gamepad.swift).
+            // The menu lists them for reference.
             CommandMenu("Show") {
-                Button("Next  (Space, →, Page Down)") { appDelegate.engine.next() }
+                Button("Next  (Space, →, Page Down, controller A)") { appDelegate.engine.next() }
+                Button("Previous Video  (controller B)") { appDelegate.engine.playPrevious() }
+                Button("Pause / Resume  (P, controller Y)") { appDelegate.engine.togglePause() }
                 Button("Back One  (←, Page Up)") { appDelegate.engine.armPrevious() }
                 Button("Loop Visual  (L)") { appDelegate.engine.showLoop() }
                 Button("Blackout  (B)") { appDelegate.engine.toggleBlackout() }
@@ -47,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let setlist = Setlist()
     lazy var engine = PlaybackEngine(setlist: setlist)
     lazy var output = OutputController(engine: engine)
+    lazy var gamepad = GamepadInput(engine: engine)
     let updater = Updater()
 
     private var keyMonitor: Any?
@@ -65,6 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.updater.check(userInitiated: false)
         }
+
+        // Xbox controller: A = Next, B = previous video, Y = pause.
+        _ = gamepad
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
@@ -101,6 +109,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         switch event.charactersIgnoringModifiers?.lowercased() {
+        case "p":
+            engine.togglePause()
+            return true
         case "l":
             engine.showLoop()
             return true

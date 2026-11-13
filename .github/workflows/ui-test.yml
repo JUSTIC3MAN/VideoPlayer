@@ -1,5 +1,6 @@
-# Opens VideoPlayer on a GitHub Mac (Apple Silicon) with four test videos and Loops 1-3, presses the show
-# keys and clicks the on-screen buttons, and takes a screenshot after each step.
+# Opens VideoPlayer on a GitHub Mac (Apple Silicon) with a test setlist of four videos split into two parts
+# by two loop rows (plus one video with its own loop), presses the show keys, clicks the on-screen buttons,
+# and takes a screenshot after each step.
 # Screenshots and logs go to the "ui-test" pre-release (not the download people install).
 name: UI test
 
@@ -20,11 +21,18 @@ jobs:
       - name: Build
         run: ./build.sh
 
-      - name: Old setlist format (one loop) carries over as Loop 1
+      - name: Old setlist formats carry over (their loops become loop rows)
         run: |
           M="$PWD/.github/test-media"
           D="$HOME/Library/Application Support/VideoPlayer"
           mkdir -p "$D"
+          check() {  # $1 = what the log should say about the loops, $2 = test name
+            build/VideoPlayer.app/Contents/MacOS/VideoPlayer > migrate.log 2>&1 &
+            sleep 6; pkill -x VideoPlayer; sleep 1
+            grep "Loaded setlist" migrate.log
+            if grep -qF "$1" migrate.log; then echo "::notice title=$2::$1"; else echo "::error title=$2 failed::$(grep 'Loaded setlist' migrate.log)"; exit 1; fi
+          }
+          # Version 1: one loop -> a loop row at the top, so it still plays after every video
           python3 - "$M" "$D/Current Setlist.json" <<'PY'
           import json, sys, uuid
           m, out = sys.argv[1], sys.argv[2]
@@ -32,12 +40,20 @@ jobs:
           json.dump({"version": 1, "cues": cues, "defaultLoop": {"path": f"{m}/loop_bars.mp4"},
                      "crossfade": 0.5, "fillScreen": False, "videoAudio": True}, open(out, "w"))
           PY
-          build/VideoPlayer.app/Contents/MacOS/VideoPlayer > migrate.log 2>&1 &
-          sleep 6; pkill -x VideoPlayer; sleep 1
-          grep "Loaded setlist" migrate.log
-          grep -q "loops: loop_bars, -, -" migrate.log && echo "::notice title=Migration::old one-loop setlist -> Loop 1 = loop_bars" || { echo "::error title=Migration failed::$(grep 'Loaded setlist' migrate.log)"; exit 1; }
+          check "1 videos, 1 loops: loop_bars (videos 1-1)" "Version 1 setlist"
+          # Version 2: Loops 1-3 -> Loop 1 at the top, Loops 2 and 3 at the end
+          python3 - "$M" "$D/Current Setlist.json" <<'PY'
+          import json, sys, uuid
+          m, out = sys.argv[1], sys.argv[2]
+          cues = [{"id": str(uuid.uuid4()).upper(), "file": {"path": f"{m}/{n}.mp4"}, "duration": 0}
+                  for n in ("song_red", "song_blue", "song_green", "song_yellow")]
+          loops = [{"path": f"{m}/{n}.mp4"} for n in ("loop_bars", "loop_2", "loop_3")]
+          json.dump({"version": 2, "cues": cues, "loopSlots": loops,
+                     "crossfade": 0.5, "fillScreen": False, "videoAudio": True}, open(out, "w"))
+          PY
+          check "4 videos, 3 loops: loop_bars (videos 1-4), loop_2 (no videos), loop_3 (no videos)" "Version 2 setlist"
 
-      - name: Prepare a test setlist (4 videos + Loops 1-3)
+      - name: Prepare a test setlist (two parts, each with its own loop)
         run: |
           M="$PWD/.github/test-media"
           D="$HOME/Library/Application Support/VideoPlayer"
@@ -45,12 +61,15 @@ jobs:
           python3 - "$M" "$D/Current Setlist.json" <<'PY'
           import json, sys, uuid
           m, out = sys.argv[1], sys.argv[2]
-          cues = [{"id": str(uuid.uuid4()).upper(), "file": {"path": f"{m}/{n}.mp4"}, "duration": 0}
-                  for n in ("song_red", "song_blue", "song_green", "song_yellow")]
-          loops = [{"path": f"{m}/{n}.mp4"} for n in ("loop_bars", "loop_2", "loop_3")]
-          show = {"version": 2, "cues": cues, "loopSlots": loops,
-                  "crossfade": 0.5, "fillScreen": False, "videoAudio": True}
-          json.dump(show, open(out, "w"))
+          def row(name, loop=False, own=None):
+              r = {"id": str(uuid.uuid4()).upper(), "file": {"path": f"{m}/{name}.mp4"}, "duration": 0, "isLoop": loop}
+              if own: r["loop"] = {"path": f"{m}/{own}.mp4"}
+              return r
+          # Part 1: loop_bars after red and blue. Part 2: loop_2 after green; yellow has its own loop (loop_3).
+          cues = [row("loop_bars", True), row("song_red"), row("song_blue"),
+                  row("loop_2", True), row("song_green"), row("song_yellow", own="loop_3")]
+          json.dump({"version": 3, "cues": cues, "crossfade": 0.5, "fillScreen": False, "videoAudio": True},
+                    open(out, "w"))
           PY
 
       - name: Install a mouse-click tool
@@ -64,47 +83,71 @@ jobs:
           shot() { screencapture -x "shots/$1.png"; }
           front() { osascript -e 'tell application "System Events" to tell process "VideoPlayer" to set frontmost to true' >> steps.log 2>&1; }
           key()  { front; osascript -e "tell application \"System Events\" to $1" >> steps.log 2>&1; }
-          # Real mouse clicks at the button positions (screen points; the window opens at the same place every run)
-          click() { front; sleep 0.3; cliclick "c:$2" >> steps.log 2>&1; step "clicked $1 at $2"; }
-          dclick() { front; sleep 0.3; cliclick "dc:$2" >> steps.log 2>&1; step "double-clicked $1 at $2"; }
-          NEXT=775,457; BACK=634,513; LOOP=721,513; BLACKOUT=818,513; STOP=916,513; ADD=366,87; ROW3=220,304; ROW4=220,382; SEEK75=884,395
+          # Where things are: read from the app's accessibility info (positions.applescript), so the
+          # clicks land on the buttons wherever the layout puts them.
+          where() { osascript .github/ui-test/positions.applescript > positions.txt 2>> steps.log; }
+          button() {  # middle of the button whose name or description is exactly $1 (else contains $1)
+            awk -F'|' -v t="$1" '$1=="BUTTON" && ($2==t || $3==t) { printf "%d,%d\n", $4+$6/2, $5+$7/2; f=1; exit }
+              END { if (!f) exit 1 }' positions.txt ||
+            awk -F'|' -v t="$1" '$1=="BUTTON" && (index($2,t) || index($3,t)) { printf "%d,%d\n", $4+$6/2, $5+$7/2; exit }' positions.txt
+          }
+          row() {  # setlist row $1 (1 = top), at the title
+            awk -F'|' -v n="$1" '$1=="ROW" { c++; if (c==n) { printf "%d,%d\n", $4+210, $5+$7/2; exit } }' positions.txt
+          }
+          seek75() {  # the seek bar sits just above the NEXT button and is as wide as it
+            awk -F'|' '$1=="BUTTON" && (index($2,"NEXT") || index($3,"NEXT")) { printf "%d,%d\n", $4+$6*0.75, $5-23; exit }' positions.txt
+          }
+          click() { local p; p="$2"; [ -z "$p" ] && { step "NOT FOUND: $1"; return; }; front; sleep 0.3; cliclick "c:$p" >> steps.log 2>&1; step "clicked $1 at $p"; }
+          dclick() { local p; p="$2"; [ -z "$p" ] && { step "NOT FOUND: $1"; return; }; front; sleep 0.3; cliclick "dc:$p" >> steps.log 2>&1; step "double-clicked $1 at $p"; }
 
           build/VideoPlayer.app/Contents/MacOS/VideoPlayer > app.log 2>&1 &
           sleep 8
           front; sleep 1
           shot 01_opened
+          where
+          echo "--- positions"; cat positions.txt; echo "---"
+          cp positions.txt shots/positions.txt
 
           step "KEYS"
-          key "key code 49";  sleep 0.7
-          click "seek bar at 75%" $SEEK75; sleep 0.4; shot 02_space_plays_red_then_seek_75
-          sleep 3.5;                     shot 03_red_ended_into_loop
-          key "key code 124"; sleep 1.5; shot 04_right_arrow_plays_blue
-          sleep 3.5
+          key "key code 49";  sleep 0.7                 # Space: Next
+          click "seek bar at 75%" "$(seek75)"; sleep 0.4; shot 02_space_plays_red_then_seek_75
+          sleep 3.5;                                    shot 03_red_ended_loop1_on_screen
+          key "key code 124"; sleep 1                   # Right arrow: Next
+          key "keystroke \"p\""; sleep 1;               shot 04_blue_paused_with_p
+          sleep 2;                                      shot 05_still_paused_2s_later
+          key "keystroke \"p\""; sleep 0.5;             shot 06_p_again_resumes
+          sleep 3.5;                                    shot 07_blue_ended_loop1_again
+          key "key code 49";  sleep 3.8;                shot 08_green_ended_loop2_on_screen
 
           step "BUTTONS"
-          click "Stop" $STOP;           sleep 1.5; shot 05_click_stop_black
-          click "NEXT" $NEXT;           sleep 1.5; shot 06_click_next_plays_red
-          sleep 3.5;                               shot 07_red_ended_into_loop
-          click "NEXT" $NEXT;           sleep 0.8
-          click "Blackout" $BLACKOUT;   sleep 1;   shot 08_next_blue_then_blackout_on
-          sleep 3.5;                               shot 09_blue_ended_screen_stays_black
-          click "Blackout" $BLACKOUT;   sleep 1;   shot 10_blackout_off_shows_loop
-          click "Loop" $LOOP;           sleep 1;   shot 11_click_loop
-          click "Back" $BACK;           sleep 1;   shot 12_click_back_next_moves_up
-          dclick "row 3 (green)" $ROW3; sleep 1.5; shot 13_doubleclick_row3_plays_green
-          sleep 3;                                 shot 13b_green_ended_loop3
-          dclick "row 4 (yellow)" $ROW4; sleep 4.5; shot 13c_yellow_ended_back_to_loop1
+          click "Previous" "$(button Previous)";   sleep 1;   shot 09_previous_plays_blue
+          click "Pause" "$(button Pause)";         sleep 1;   shot 10_pause_button_paused
+          click "Resume" "$(button Pause)";        sleep 3.8; shot 11_resume_then_blue_ended_loop1
+          click "Stop" "$(button Stop)";           sleep 1.5; shot 12_click_stop_black
+          click "NEXT" "$(button NEXT)";           sleep 1.5; shot 13_click_next_plays_red
+          sleep 3.5;                                          shot 14_red_ended_loop1
+          click "NEXT" "$(button NEXT)";           sleep 0.8
+          click "Blackout" "$(button Blackout)";   sleep 1;   shot 15_next_blue_then_blackout_on
+          sleep 3.5;                                          shot 16_blue_ended_screen_stays_black
+          click "Blackout" "$(button Blackout)";   sleep 1;   shot 17_blackout_off_shows_loop
+          click "Loop" "$(button Loop)";           sleep 1;   shot 18_click_loop
+          click "Back One" "$(button 'Back One')"; sleep 1;   shot 19_back_one_next_moves_up
+          dclick "row 6 (yellow)" "$(row 6)";      sleep 4.3; shot 20_yellow_ended_its_own_loop3
+          dclick "row 4 (loop_2)" "$(row 4)";      sleep 1.5; shot 21_doubleclick_loop2_shows_it_now
+          click "row 2 (red)" "$(row 2)";          sleep 0.5
+          click "Use as Loop" "$(button 'Use as Loop')"; sleep 1; shot 22_red_turned_into_a_loop
+          click "Use as Video" "$(button 'Use as Loop')"; sleep 1; shot 23_red_back_to_a_video
 
           step "ADD VIDEOS (file window, pick a video by its path)"
-          click "Add Videos" $ADD;      sleep 3;   shot 14_add_videos_after_3s
-          sleep 5;                                 shot 15_add_videos_after_8s
+          click "Add Videos" "$(button 'Add Videos')"; sleep 3; shot 24_add_videos_after_3s
+          sleep 5;                                            shot 25_add_videos_after_8s
           key "keystroke \"g\" using {command down, shift down}"; sleep 2
-          key "keystroke \"$PWD/.github/test-media/song_blue.mp4\""; sleep 1; shot 16_go_to_file
-          key "key code 36"; sleep 2;              shot 17_file_selected
-          key "key code 36"; sleep 3;              shot 18_after_open_setlist_has_4
+          key "keystroke \"$PWD/.github/test-media/song_blue.mp4\""; sleep 1; shot 26_go_to_file
+          key "key code 36"; sleep 2;                         shot 27_file_selected
+          key "key code 36"; sleep 3;                         shot 28_after_open_setlist_has_5_videos
 
-          key "keystroke \"f\""; sleep 2;          shot 19_key_f_output_fullscreen
-          key "key code 53"; sleep 1;              shot 20_esc_output_hidden
+          key "keystroke \"f\""; sleep 2;                     shot 29_key_f_output_fullscreen
+          key "key code 53"; sleep 1;                         shot 30_esc_output_hidden
 
           pkill -x VideoPlayer
           echo "--- app log" >> steps.log; cat app.log >> steps.log
@@ -115,6 +158,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          (cd shots && zip -q ../ui-test-shots.zip *.png)
+          (cd shots && zip -q ../ui-test-shots.zip *.png positions.txt)
           gh release view ui-test >/dev/null 2>&1 || gh release create ui-test --prerelease --title "UI test results (not an install)" --notes "Screenshots from the automated UI test. Install VideoPlayer from the latest release instead."
           gh release upload ui-test ui-test-shots.zip steps.log --clobber

@@ -9,7 +9,7 @@ struct ControlView: View {
         HSplitView {
             SetlistPane(selection: $selection)
                 .frame(minWidth: 540, maxWidth: .infinity, maxHeight: .infinity)
-            SidePanel()
+            SidePanel(selection: $selection)
                 .frame(minWidth: 360, idealWidth: 400, maxWidth: 480, maxHeight: .infinity)
         }
     }
@@ -22,18 +22,27 @@ struct SetlistPane: View {
     @EnvironmentObject var engine: PlaybackEngine
     @Binding var selection: Set<UUID>
 
-    private var totalTime: String {
-        formatTime(setlist.cues.reduce(0) { $0 + $1.duration })
-    }
+    private var selectedRows: [Cue] { setlist.cues.filter { selection.contains($0.id) } }
 
     var body: some View {
+        let layout = SetlistLayout(cues: setlist.cues)
+        let total = setlist.cues.filter { !$0.isLoop }.reduce(0) { $0 + $1.duration }
+        let selectionIsLoops = !selectedRows.isEmpty && selectedRows.allSatisfy { $0.isLoop }
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Text("Setlist").font(.title2.bold())
-                Text("\(setlist.cues.count) videos · \(totalTime)")
+                Text("\(layout.videoCount) videos · \(layout.loopCount) \(layout.loopCount == 1 ? "loop" : "loops") · \(formatTime(total))")
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Spacer()
                 Button { setlist.chooseVideos() } label: { Label("Add Videos", systemImage: "plus") }
+                Button { setlist.setLoopRows(selection, !selectionIsLoops) } label: {
+                    Label(selectionIsLoops ? "Use as Video" : "Use as Loop",
+                          systemImage: selectionIsLoops ? "film" : "infinity")
+                }
+                .disabled(selection.isEmpty)
+                .help(selectionIsLoops ? "Turns the selected loops back into videos"
+                                       : "Turns the selected videos into loops. A loop plays after the videos below it.")
                 Button {
                     setlist.remove(ids: selection)
                     selection.removeAll()
@@ -47,8 +56,8 @@ struct SetlistPane: View {
                 EmptyDropZone()
             } else {
                 List(selection: $selection) {
-                    ForEach(Array(setlist.cues.enumerated()), id: \.element.id) { index, cue in
-                        CueRow(index: index, cue: cue)
+                    ForEach(setlist.cues) { cue in
+                        SetlistRow(cue: cue, layout: layout)
                             .tag(cue.id)
                     }
                     .onMove { setlist.move(from: $0, to: $1) }
@@ -64,13 +73,13 @@ struct SetlistPane: View {
                 .contextMenu(forSelectionType: UUID.self) { ids in
                     rowMenu(ids)
                 } primaryAction: { ids in
-                    // Double-click plays the video now.
+                    // Double-click plays a video now, or shows a loop now.
                     if let id = ids.first { engine.playNow(id) }
                 }
             }
 
             Divider()
-            Text("Drag rows to reorder · drop videos from Finder · double-click plays a video now · right-click for its own loop")
+            Text("Drag rows to reorder · drop videos from Finder · double-click plays a video (or shows a loop) now · right-click for more")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(8)
@@ -79,14 +88,26 @@ struct SetlistPane: View {
 
     @ViewBuilder
     private func rowMenu(_ ids: Set<UUID>) -> some View {
-        if ids.count == 1, let id = ids.first {
-            Button("Play Now") { engine.playNow(id) }
-            Button("Set as Next") { engine.arm(id) }
-            Divider()
-            Button("Choose Loop for After This Video…") { setlist.chooseLoop(for: id) }
-            if setlist.cues.first(where: { $0.id == id })?.loop != nil {
-                Button("Use Loops 1–3 in Turn") { setlist.setLoop(nil, for: id) }
+        let rows = setlist.cues.filter { ids.contains($0.id) }
+        if rows.count == 1, let cue = rows.first {
+            if cue.isLoop {
+                Button("Show This Loop Now") { engine.showLoop(row: cue.id) }
+                Divider()
+                Button("Use as Video") { setlist.setLoopRows([cue.id], false) }
+            } else {
+                Button("Play Now") { engine.playNow(cue.id) }
+                Button("Set as Next") { engine.arm(cue.id) }
+                Divider()
+                Button("Use as Loop") { setlist.setLoopRows([cue.id], true) }
+                Button("Choose Loop for After This Video…") { setlist.chooseLoop(for: cue.id) }
+                if cue.loop != nil {
+                    Button("Use the Loop Above It") { setlist.setLoop(nil, for: cue.id) }
+                }
             }
+            Divider()
+        } else if rows.count > 1 {
+            let allLoops = rows.allSatisfy { $0.isLoop }
+            Button(allLoops ? "Use as Videos" : "Use as Loops") { setlist.setLoopRows(ids, !allLoops) }
             Divider()
         }
         if !ids.isEmpty {
@@ -102,15 +123,33 @@ struct SetlistPane: View {
     }
 }
 
+/// A setlist row: a video, or a loop that starts a part of the show.
+struct SetlistRow: View {
+    let cue: Cue
+    let layout: SetlistLayout
+
+    var body: some View {
+        if cue.isLoop {
+            LoopRow(cue: cue, part: layout.parts[cue.id])
+        } else {
+            CueRow(cue: cue,
+                   number: layout.videoNumber[cue.id] ?? 0,
+                   loopAbove: layout.loopAbove[cue.id].flatMap { layout.parts[$0] })
+        }
+    }
+}
+
 struct CueRow: View {
     @EnvironmentObject var setlist: Setlist
     @EnvironmentObject var engine: PlaybackEngine
-    let index: Int
     let cue: Cue
+    let number: Int
+    /// The part of the show this video is in (the loop row above it).
+    let loopAbove: SetlistLayout.Part?
 
     var body: some View {
         HStack(spacing: 12) {
-            Text("\(index + 1)")
+            Text("\(number)")
                 .font(.system(.title3, design: .rounded).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 32, alignment: .trailing)
@@ -122,10 +161,10 @@ struct CueRow: View {
                     Text(formatTime(cue.duration)).monospacedDigit()
                     if let loop = cue.loop {
                         Label("then its own loop: \(loop.name)", systemImage: "repeat").lineLimit(1)
-                    } else if let n = setlist.loopSlotNumber(forCueAt: index), let loop = setlist.loopSlots[n - 1] {
-                        Label("then Loop \(n): \(loop.name)", systemImage: "repeat").lineLimit(1)
+                    } else if let part = loopAbove {
+                        Label("then Loop \(part.number): \(part.title)", systemImage: "repeat").lineLimit(1)
                     } else {
-                        Label("then black (no loop chosen)", systemImage: "repeat")
+                        Label("then black (no loop above it)", systemImage: "repeat").lineLimit(1)
                     }
                 }
                 .font(.caption)
@@ -138,8 +177,13 @@ struct CueRow: View {
             }
             Spacer(minLength: 8)
             if engine.playingCueID == cue.id {
-                StateBadge(text: engine.phase == .playing ? "PLAYING" : "LOOP AFTER",
-                           color: engine.phase == .playing ? .green : .orange)
+                if engine.phase == .playing {
+                    StateBadge(text: engine.paused ? "PAUSED" : "PLAYING",
+                               color: engine.paused ? .yellow : .green,
+                               textColor: engine.paused ? .black : .white)
+                } else {
+                    StateBadge(text: "LOOP AFTER", color: .orange)
+                }
             }
             if engine.armedCueID == cue.id {
                 StateBadge(text: "NEXT", color: .blue)
@@ -149,9 +193,61 @@ struct CueRow: View {
     }
 }
 
+/// A loop row. Its loop plays after every video below it, up to the next loop row.
+struct LoopRow: View {
+    @EnvironmentObject var setlist: Setlist
+    @EnvironmentObject var engine: PlaybackEngine
+    let cue: Cue
+    let part: SetlistLayout.Part?
+
+    private var coverage: String {
+        guard let part, !part.videos.isEmpty else {
+            return "No videos below it yet: drag it above the first video it should follow"
+        }
+        return "Plays after " + videosText(part.videos)
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "infinity")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(.orange)
+                .frame(width: 32, alignment: .trailing)
+            Thumbnail(image: setlist.thumbnails[cue.file.path])
+                .frame(width: 112, height: 63)
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.orange, lineWidth: 2))
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text("LOOP \(part?.number ?? 0)")
+                        .font(.caption.bold())
+                        .foregroundStyle(.orange)
+                    Text(cue.title).font(.headline).lineLimit(1)
+                }
+                Text(coverage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if setlist.missing.contains(cue.file.path) {
+                    Label("File not found", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+            Spacer(minLength: 8)
+            if engine.phase == .loop && engine.loopRowID == cue.id {
+                StateBadge(text: engine.paused ? "PAUSED" : "ON SCREEN",
+                           color: engine.paused ? .yellow : .orange,
+                           textColor: engine.paused ? .black : .white)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
 struct StateBadge: View {
     let text: String
     let color: Color
+    var textColor: Color = .white
 
     var body: some View {
         Text(text)
@@ -159,7 +255,7 @@ struct StateBadge: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(color, in: Capsule())
-            .foregroundStyle(.white)
+            .foregroundStyle(textColor)
     }
 }
 
@@ -229,6 +325,7 @@ func loadFileURLs(_ providers: [NSItemProvider], completion: @escaping ([URL]) -
 
 struct SidePanel: View {
     @EnvironmentObject var engine: PlaybackEngine
+    @Binding var selection: Set<UUID>
 
     var body: some View {
         ScrollView {
@@ -244,7 +341,7 @@ struct SidePanel: View {
                         .foregroundStyle(.red)
                 }
                 TransportView()
-                GroupBox("Loop visuals") { LoopPicker().padding(4) }
+                GroupBox("Loops") { LoopSchedule(selection: $selection).padding(4) }
                 GroupBox("Output") { OutputSettings().padding(4) }
                 ShortcutHelp()
             }
@@ -256,17 +353,18 @@ struct SidePanel: View {
 struct PhaseTag: View {
     @EnvironmentObject var engine: PlaybackEngine
 
-    private var phaseInfo: (String, Color) {
-        if engine.blackout { return ("BLACKOUT", .gray) }
-        switch engine.phase {
-        case .idle: return ("STANDBY", .gray)
-        case .playing: return ("PLAYING", .green)
-        case .loop: return ("LOOP", .orange)
-        }
-    }
-
     var body: some View {
-        StateBadge(text: phaseInfo.0, color: phaseInfo.1)
+        if engine.blackout {
+            StateBadge(text: "BLACKOUT", color: .gray)
+        } else if engine.paused {
+            StateBadge(text: "PAUSED", color: .yellow, textColor: .black)
+        } else {
+            switch engine.phase {
+            case .idle: StateBadge(text: "STANDBY", color: .gray)
+            case .playing: StateBadge(text: "PLAYING", color: .green)
+            case .loop: StateBadge(text: "LOOP", color: .orange)
+            }
+        }
     }
 }
 
@@ -379,26 +477,103 @@ struct TransportView: View {
             .disabled(engine.armedCueID == nil)
 
             HStack {
-                Button { engine.armPrevious() } label: { Label("Back", systemImage: "backward.end") }
+                Button { engine.playPrevious() } label: { Label("Previous", systemImage: "backward.end.fill") }
+                    .disabled(engine.playingCueID == nil)
+                    .help("Plays the video before the one playing now (B on a game controller)")
+                Button { engine.togglePause() } label: {
+                    Label(engine.paused ? "Resume" : "Pause", systemImage: engine.paused ? "play.fill" : "pause.fill")
+                        .frame(minWidth: 64)
+                }
+                .disabled(engine.phase == .idle)
+                .help("Freezes the picture; press again to carry on (P, or Y on a game controller)")
                 Button { engine.showLoop() } label: { Label("Loop", systemImage: "repeat") }
+            }
+            .frame(maxWidth: .infinity)
+
+            HStack {
+                Button { engine.armPrevious() } label: { Label("Back One", systemImage: "arrow.up") }
+                    .help("Moves NEXT up one video without playing it (← or Page Up)")
                 Button { engine.toggleBlackout() } label: {
                     Label("Blackout", systemImage: engine.blackout ? "sun.max" : "moon.fill")
                 }
                 Button(role: .destructive) { engine.stop() } label: { Label("Stop", systemImage: "stop.fill") }
             }
             .frame(maxWidth: .infinity)
+
+            ControllerStatus()
         }
     }
 }
 
-/// Loop 1–3. They take turns after the videos: video 1 → Loop 1, 2 → Loop 2, 3 → Loop 3, 4 → Loop 1 …
-struct LoopPicker: View {
+/// Shows whether a game controller is connected and what its buttons do.
+struct ControllerStatus: View {
+    @EnvironmentObject var gamepad: GamepadInput
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(0..<Setlist.loopSlotCount, id: \.self) { slot in
-                LoopSlotRow(slot: slot)
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "gamecontroller.fill")
+                .foregroundStyle(gamepad.controllerName == nil ? Color.secondary : Color.green)
+            if let name = gamepad.controllerName {
+                Text("\(name): A Next · B Previous · Y Pause")
+            } else {
+                Text("No game controller. Pair an Xbox controller in System Settings → Bluetooth.")
             }
-            Text("Loops take turns: after video 1 comes Loop 1, after video 2 Loop 2, after video 3 Loop 3, then Loop 1 again after video 4. Empty slots are skipped. A video can also have its own loop: right-click it in the setlist.")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// The loops in setlist order and the videos each one plays after (the parts of the show).
+struct LoopSchedule: View {
+    @EnvironmentObject var setlist: Setlist
+    @Binding var selection: Set<UUID>
+
+    /// Add Loop… puts the new loop above the first selected row.
+    private var insertIndex: Int? {
+        setlist.cues.firstIndex { selection.contains($0.id) }
+    }
+
+    var body: some View {
+        let layout = SetlistLayout(cues: setlist.cues)
+        let loops = setlist.cues.filter { $0.isLoop }
+        VStack(alignment: .leading, spacing: 8) {
+            if loops.isEmpty {
+                Text("No loops yet, so the screen goes black after each video.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(loops) { cue in
+                let part = layout.parts[cue.id]
+                HStack(spacing: 8) {
+                    Text("\(part?.number ?? 0)")
+                        .font(.system(.body, design: .rounded).bold())
+                        .foregroundStyle(.orange)
+                        .frame(width: 14)
+                    Thumbnail(image: setlist.thumbnails[cue.file.path])
+                        .frame(width: 72, height: 40)
+                    Text(cue.title).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(videosText(part?.videos ?? []))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { selection = [cue.id] }
+                .help("Click to select it in the setlist")
+            }
+            if !loops.isEmpty && !layout.videosWithoutLoop.isEmpty {
+                Label("\(videosText(layout.videosWithoutLoop).capitalizedFirst) \(layout.videosWithoutLoop.count == 1 ? "has" : "have") no loop above, so the screen goes black after.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button("Add Loop…") { setlist.chooseLoopRow(insertAt: insertIndex) }
+                .help("Adds a loop above the selected row (with nothing selected: at the top, or at the end if there are loops already)")
+            Text("Any video can be a loop: select it and click Use as Loop, or right-click it. A loop plays after every video below it, up to the next loop, so each loop covers one part of the show. Drag a loop up or down to change how many videos it covers. Double-click a loop to show it now.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -407,29 +582,9 @@ struct LoopPicker: View {
     }
 }
 
-struct LoopSlotRow: View {
-    @EnvironmentObject var setlist: Setlist
-    let slot: Int
-
-    var body: some View {
-        let ref = setlist.loopSlots[slot]
-        HStack(spacing: 8) {
-            Text("\(slot + 1)")
-                .font(.system(.body, design: .rounded).bold())
-                .foregroundStyle(.secondary)
-                .frame(width: 14)
-            Thumbnail(image: ref.flatMap { setlist.thumbnails[$0.path] })
-                .frame(width: 72, height: 40)
-            Text(ref?.name ?? "Empty")
-                .lineLimit(1)
-                .foregroundStyle(ref == nil ? Color.secondary : Color.primary)
-            Spacer(minLength: 4)
-            Button("Choose…") { setlist.chooseLoopSlot(slot) }
-            if ref != nil {
-                Button("Clear") { setlist.setLoopSlot(slot, nil) }
-            }
-        }
-    }
+extension String {
+    /// "videos 1–2" → "Videos 1–2"
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }
 
 struct OutputSettings: View {
@@ -468,6 +623,7 @@ struct ShortcutHelp: View {
     private let rows: [(String, String)] = [
         ("Space  →  Page Down", "Next video"),
         ("←  Page Up", "Move NEXT back one (doesn't play)"),
+        ("P", "Pause / resume"),
         ("L", "Loop visual now"),
         ("B", "Blackout on / off"),
         ("F", "Show / hide output"),
