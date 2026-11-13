@@ -24,6 +24,13 @@ jobs:
           mv old/VideoPlayer.app /Applications/
           defaults read /Applications/VideoPlayer.app/Contents/Info CFBundleShortVersionString
 
+      - name: What GitHub's API answers without a login (the app checks the same way)
+        run: |
+          curl -s -i -H "User-Agent: VideoPlayer-updater" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/latest" -o api.txt || true
+          grep -i "^HTTP\|^x-ratelimit-limit\|^x-ratelimit-remaining\|^x-ratelimit-reset" api.txt || true
+          grep -o '"tag_name": *"[^"]*"' api.txt || grep -o '"message": *"[^"]*"' api.txt || true
+
       - name: Open it and click "Update and Restart"
         run: |
           set +e
@@ -31,6 +38,14 @@ jobs:
           log "installed: $(defaults read /Applications/VideoPlayer.app/Contents/Info CFBundleShortVersionString)"
           open /Applications/VideoPlayer.app
           sleep 12
+          # If no update window has come up by itself, ask from the menu (a check asked for always answers,
+          # so a failure shows its reason on screen).
+          WINDOWS="$(osascript -e 'tell application "System Events" to count windows of process "VideoPlayer"' 2>/dev/null || echo 1)"
+          log "windows after 12 s: $WINDOWS"
+          if [ "${WINDOWS:-1}" -lt 2 ]; then
+            osascript -e 'tell application "System Events" to tell process "VideoPlayer" to click menu item "Check for Updates…" of menu "VideoPlayer" of menu bar 1' >> update.log 2>&1
+            sleep 8
+          fi
           screencapture -x update_1_alert.png
           # The update alert's default button is "Update and Restart": press Return.
           osascript -e 'tell application "System Events" to tell process "VideoPlayer" to set frontmost to true' -e 'tell application "System Events" to key code 36' >> update.log 2>&1
