@@ -5,11 +5,14 @@ import UniformTypeIdentifiers
 
 /// The setlist and show settings. Saved automatically, so the app reopens where you left off.
 ///
-/// The setlist holds videos and loops. A loop row plays after every video below it, up to the next
-/// loop row, so the loops split the show into parts (for example videos 1–4 with one loop, videos 5–7
-/// with another).
+/// The setlist holds videos and loops in named columns (artists or parts of the show). The show plays the
+/// columns left to right, each from top to bottom. A loop row plays after every video below it, up to the
+/// next loop row, so a loop at the top of a column plays after that column's videos.
 final class Setlist: ObservableObject {
+    /// Every row in show order: column by column, left to right, each column top to bottom.
     @Published var cues: [Cue] = [] { didSet { scheduleSave() } }
+    /// The columns, left to right. There is always at least one.
+    @Published var columns: [ShowColumn] = [ShowColumn(name: "Part 1")] { didSet { scheduleSave() } }
     @Published var crossfade: Double = 0.5 { didSet { scheduleSave() } }
     @Published var fillScreen = false { didSet { scheduleSave() } }
     @Published var videoAudio = true { didSet { scheduleSave() } }
@@ -42,13 +45,16 @@ final class Setlist: ObservableObject {
         return type.conforms(to: .movie) || type.conforms(to: .video)
     }
 
-    func add(urls: [URL], at index: Int? = nil) {
+    /// Adds videos to a column (nil or unknown: the last column), at a position in that column (nil: the end).
+    func add(urls: [URL], to columnID: UUID? = nil, at index: Int? = nil) {
         let videos = urls.filter(Self.isVideo)
         guard !videos.isEmpty else { showLog("Add: none of the chosen files are videos"); NSSound.beep(); return }
-        let newCues = videos.map { Cue(file: FileRef(url: $0)) }
-        let position = min(max(index ?? cues.count, 0), cues.count)
-        cues.insert(contentsOf: newCues, at: position)
-        showLog("Added \(newCues.count) video(s); setlist now \(cues.count) rows")
+        let column = columnID.flatMap { id in columns.contains { $0.id == id } ? id : nil } ?? columns[columns.count - 1].id
+        let newCues = videos.map { Cue(file: FileRef(url: $0), column: column) }
+        var rows = cues(in: column)
+        rows.insert(contentsOf: newCues, at: min(max(index ?? rows.count, 0), rows.count))
+        replace(column, with: rows)
+        showLog("Added \(newCues.count) video(s) to \(columnName(column)); setlist now \(cues.count) rows")
         for cue in newCues { loadInfo(cueID: cue.id, path: cue.file.path) }
     }
 
@@ -56,8 +62,111 @@ final class Setlist: ObservableObject {
         cues.removeAll { ids.contains($0.id) }
     }
 
-    func move(from source: IndexSet, to destination: Int) {
-        cues.move(fromOffsets: source, toOffset: destination)
+    // MARK: - Columns
+
+    /// The column a row is in. Rows from before columns existed (or whose column is gone) are in the first one.
+    func columnID(of cue: Cue) -> UUID {
+        if let id = cue.column, columns.contains(where: { $0.id == id }) { return id }
+        return columns[0].id
+    }
+
+    func cues(in columnID: UUID) -> [Cue] {
+        cues.filter { self.columnID(of: $0) == columnID }
+    }
+
+    func columnName(_ id: UUID) -> String {
+        let name = columns.first { $0.id == id }?.name ?? ""
+        return name.isEmpty ? "Untitled" : name
+    }
+
+    /// Show order from each column's rows: every column, left to right.
+    private func showOrder(_ rowsOf: (UUID) -> [Cue]) -> [Cue] {
+        columns.flatMap { column in
+            rowsOf(column.id).map { cue -> Cue in
+                var cue = cue
+                cue.column = column.id
+                return cue
+            }
+        }
+    }
+
+    private func rowsByColumn(_ rows: [Cue]) -> [UUID: [Cue]] {
+        Dictionary(grouping: rows, by: { self.columnID(of: $0) })
+    }
+
+    private func replace(_ columnID: UUID, with rows: [Cue]) {
+        let others = rowsByColumn(cues)
+        cues = showOrder { $0 == columnID ? rows : (others[$0] ?? []) }
+    }
+
+    /// Adds an empty column at the right end and returns it (so its name can be typed in straight away).
+    @discardableResult
+    func addColumn() -> UUID {
+        var number = columns.count + 1
+        while columns.contains(where: { $0.name == "Part \(number)" }) { number += 1 }
+        let column = ShowColumn(name: "Part \(number)")
+        columns.append(column)
+        showLog("Added column \(column.name); columns: \(columnSummary())")
+        return column.id
+    }
+
+    func renameColumn(_ id: UUID, to name: String) {
+        guard let i = columns.firstIndex(where: { $0.id == id }), columns[i].name != name else { return }
+        columns[i].name = name
+    }
+
+    /// Moves a column left (-1) or right (+1). The show order follows.
+    func moveColumn(_ id: UUID, by offset: Int) {
+        guard let i = columns.firstIndex(where: { $0.id == id }), columns.indices.contains(i + offset) else { return }
+        let rows = rowsByColumn(cues)
+        columns.swapAt(i, i + offset)
+        cues = showOrder { rows[$0] ?? [] }
+        showLog("Moved column \(columnName(id)); columns: \(columnSummary())")
+    }
+
+    /// Removes a column. Its rows go to the end of the column on its left (the first column's go to the
+    /// start of the next one), so no video is lost.
+    func removeColumn(_ id: UUID) {
+        guard columns.count > 1, let i = columns.firstIndex(where: { $0.id == id }) else { return }
+        var rows = rowsByColumn(cues)
+        let moving = rows[id] ?? []
+        if i > 0 {
+            rows[columns[i - 1].id, default: []] += moving
+        } else {
+            rows[columns[i + 1].id] = moving + (rows[columns[i + 1].id] ?? [])
+        }
+        let name = columnName(id)
+        columns.remove(at: i)
+        cues = showOrder { rows[$0] ?? [] }
+        showLog("Removed column \(name); columns: \(columnSummary())")
+    }
+
+    /// A drag within one column.
+    func move(in columnID: UUID, from source: IndexSet, to destination: Int) {
+        var rows = cues(in: columnID)
+        rows.move(fromOffsets: source, toOffset: destination)
+        replace(columnID, with: rows)
+        showLog("Reordered column \(columnName(columnID))")
+    }
+
+    /// Moves rows into a column (Move to Column, or a drag from another column), at a position in that
+    /// column (nil: the end). The position counts the column's rows as they are before the move.
+    func moveRows(_ ids: Set<UUID>, to columnID: UUID, at index: Int? = nil) {
+        let moving = cues.filter { ids.contains($0.id) }
+        guard !moving.isEmpty, columns.contains(where: { $0.id == columnID }) else { return }
+        let target = cues(in: columnID)
+        let position = index.map { i in target.prefix(i).filter { !ids.contains($0.id) }.count }
+        var rows = target.filter { !ids.contains($0.id) }
+        rows.insert(contentsOf: moving, at: min(max(position ?? rows.count, 0), rows.count))
+        let others = rowsByColumn(cues.filter { !ids.contains($0.id) })
+        cues = showOrder { $0 == columnID ? rows : (others[$0] ?? []) }
+        showLog("Moved \(moving.map(\.title).joined(separator: ", ")) to column \(columnName(columnID))")
+    }
+
+    /// For the log: "Kimiko (3 rows), Ras Manuel (4 rows)".
+    func columnSummary() -> String {
+        let rows = rowsByColumn(cues)
+        return columns.map { "\(columnName($0.id)) (\(rows[$0.id]?.count ?? 0) rows)" }.joined(separator: ", ")
     }
 
     /// Turns rows into loops (isLoop true) or back into videos.
@@ -122,7 +231,8 @@ final class Setlist: ObservableObject {
 
     // MARK: - Panels
 
-    func chooseVideos() {
+    /// Add Videos: into a column (nil: the last column).
+    func chooseVideos(into columnID: UUID? = nil) {
         let panel = NSOpenPanel()
         panel.title = "Add videos to the setlist"
         panel.allowedContentTypes = Self.videoTypes
@@ -131,18 +241,32 @@ final class Setlist: ObservableObject {
         showLog("Add Videos: opening the file window")
         let result = panel.runModal()
         showLog("Add Videos: \(result == .OK ? "\(panel.urls.count) file(s) chosen" : "cancelled")")
-        if result == .OK { add(urls: panel.urls) }
+        if result == .OK { add(urls: panel.urls, to: columnID) }
     }
 
-    /// Add Loop…: picks a video and puts it in the setlist as a loop row at `index` (above that row).
-    /// With no index: at the top if there are no loops yet (so it plays after every video), else at the end.
+    /// Add Loop…: picks a video and puts it in the setlist as a loop row above the row at `index` (in
+    /// show order). With no index: at the top if there are no loops yet (so it plays after every video),
+    /// else at the end.
     func chooseLoopRow(insertAt index: Int?) {
-        guard let url = pickOneVideo(title: "Choose a loop video") else { return }
-        let cue = Cue(file: FileRef(url: url), isLoop: true)
         let position = index ?? (cues.contains { $0.isLoop } ? cues.count : 0)
-        cues.insert(cue, at: min(max(position, 0), cues.count))
+        if position < cues.count {
+            let anchor = cues[position]
+            let column = columnID(of: anchor)
+            chooseLoopRow(column: column, at: cues(in: column).firstIndex { $0.id == anchor.id })
+        } else {
+            chooseLoopRow(column: cues.isEmpty ? columns[0].id : columns[columns.count - 1].id, at: nil)
+        }
+    }
+
+    /// Add Loop…: picks a video and puts it in a column as a loop row, at a position in that column (nil: the end).
+    func chooseLoopRow(column: UUID, at index: Int?) {
+        guard let url = pickOneVideo(title: "Choose a loop video") else { return }
+        let cue = Cue(file: FileRef(url: url), isLoop: true, column: column)
+        var rows = cues(in: column)
+        rows.insert(cue, at: min(max(index ?? rows.count, 0), rows.count))
+        replace(column, with: rows)
         loadInfo(cueID: cue.id, path: cue.file.path)
-        showLog("Added loop \(cue.title); loops: \(loopSummary())")
+        showLog("Added loop \(cue.title) to \(columnName(column)); loops: \(loopSummary())")
     }
 
     /// Choose a loop video for after one particular video (instead of the loop above it).
@@ -182,7 +306,7 @@ final class Setlist: ObservableObject {
     // MARK: - Saving
 
     private func snapshot() -> ShowFile {
-        ShowFile(cues: cues, crossfade: crossfade, fillScreen: fillScreen, videoAudio: videoAudio)
+        ShowFile(cues: cues, columns: columns, crossfade: crossfade, fillScreen: fillScreen, videoAudio: videoAudio)
     }
 
     private func write(to url: URL) {
@@ -226,8 +350,26 @@ final class Setlist: ObservableObject {
             show.cues[i].loop?.refresh()
         }
 
+        // Setlists from before columns: a new column starts at each loop row, so each part of the show
+        // gets its own column ("Part 1", "Part 2" …, ready to be renamed).
+        var loadedColumns = show.columns ?? []
+        if loadedColumns.isEmpty {
+            var rowsInColumn = 0
+            for i in show.cues.indices {
+                if loadedColumns.isEmpty || (show.cues[i].isLoop && rowsInColumn > 0) {
+                    loadedColumns.append(ShowColumn(name: "Part \(loadedColumns.count + 1)"))
+                    rowsInColumn = 0
+                }
+                show.cues[i].column = loadedColumns.last?.id
+                rowsInColumn += 1
+            }
+            if loadedColumns.isEmpty { loadedColumns = [ShowColumn(name: "Part 1")] }
+        }
+
         isLoading = true
-        cues = show.cues
+        columns = loadedColumns
+        let rows = rowsByColumn(show.cues)
+        cues = showOrder { rows[$0] ?? [] }
         crossfade = show.crossfade
         fillScreen = show.fillScreen
         videoAudio = show.videoAudio
@@ -239,6 +381,7 @@ final class Setlist: ObservableObject {
         }
         let layout = SetlistLayout(cues: cues)
         showLog("Loaded setlist: \(layout.videoCount) videos, \(layout.loopCount) loops: \(loopSummary())")
+        showLog("Columns: \(columnSummary())")
     }
 
     // MARK: - Durations and thumbnails (loaded in the background)

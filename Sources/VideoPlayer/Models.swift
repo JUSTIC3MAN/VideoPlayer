@@ -28,6 +28,13 @@ struct FileRef: Codable, Equatable {
     }
 }
 
+/// A named column of the setlist: one artist or part of the show. The show plays the columns left to right,
+/// each from top to bottom.
+struct ShowColumn: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var name: String
+}
+
 /// One row of the setlist: a video, or a loop.
 ///
 /// Next never plays a loop row. A loop row's video repeats after every video below it, up to the next
@@ -40,15 +47,18 @@ struct Cue: Identifiable, Codable, Equatable {
     var duration: Double = 0
     /// true = this row is a loop (see above).
     var isLoop = false
+    /// The column it is in. nil (setlists from before columns): the first column.
+    var column: UUID?
 
     var title: String { file.name }
 
-    init(file: FileRef, isLoop: Bool = false) {
+    init(file: FileRef, isLoop: Bool = false, column: UUID? = nil) {
         self.file = file
         self.isLoop = isLoop
+        self.column = column
     }
 
-    private enum CodingKeys: String, CodingKey { case id, file, loop, duration, isLoop }
+    private enum CodingKeys: String, CodingKey { case id, file, loop, duration, isLoop, column }
 
     // Written out so setlists saved before loop rows existed (no "isLoop") still open.
     init(from decoder: Decoder) throws {
@@ -58,14 +68,17 @@ struct Cue: Identifiable, Codable, Equatable {
         loop = try c.decodeIfPresent(FileRef.self, forKey: .loop)
         duration = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
         isLoop = try c.decodeIfPresent(Bool.self, forKey: .isLoop) ?? false
+        column = try c.decodeIfPresent(UUID.self, forKey: .column)
     }
 }
 
 /// What is saved to disk (the current setlist and any "Save Setlist As" file).
 struct ShowFile: Codable {
-    /// 3: loops are rows in the setlist. 2 had Loops 1–3 taking turns. 1 had a single loop.
-    var version = 3
+    /// 4: named columns. 3: loops are rows in the setlist. 2 had Loops 1–3 taking turns. 1 had a single loop.
+    var version = 4
     var cues: [Cue]
+    /// The columns, left to right (version 4). Missing in older setlists: made when loading.
+    var columns: [ShowColumn]?
     /// Version 2's Loops 1–3. Only read (they become loop rows), never written.
     var loopSlots: [FileRef?]?
     /// Version 1's single loop. Only read (it becomes a loop row), never written.

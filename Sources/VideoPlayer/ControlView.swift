@@ -21,8 +21,14 @@ struct SetlistPane: View {
     @EnvironmentObject var setlist: Setlist
     @EnvironmentObject var engine: PlaybackEngine
     @Binding var selection: Set<UUID>
+    @FocusState private var editingColumn: UUID?
 
     private var selectedRows: [Cue] { setlist.cues.filter { selection.contains($0.id) } }
+
+    /// Add Videos goes into the column of the selected row, else the last column.
+    private var targetColumn: UUID? { selectedRows.first.map { setlist.columnID(of: $0) } }
+
+    private static let addTileWidth: CGFloat = 96
 
     var body: some View {
         let layout = SetlistLayout(cues: setlist.cues)
@@ -37,8 +43,9 @@ struct SetlistPane: View {
                     .lineLimit(1)
                     .layoutPriority(-1)
                 Spacer(minLength: 0)
-                Button { setlist.chooseVideos() } label: { Label("Add Videos", systemImage: "plus") }
+                Button { setlist.chooseVideos(into: targetColumn) } label: { Label("Add Videos", systemImage: "plus") }
                     .fixedSize()
+                    .help("Adds videos to the column of the selected video (or to the last column)")
                 Button { setlist.setLoopRows(selection, !selectionIsLoops) } label: {
                     Label(selectionIsLoops ? "Use as Video" : "Use as Loop",
                           systemImage: selectionIsLoops ? "film" : "infinity")
@@ -57,17 +64,102 @@ struct SetlistPane: View {
             .padding(12)
             Divider()
 
-            if setlist.cues.isEmpty {
-                EmptyDropZone()
+            // The columns side by side. They share the width (at least 250 points each) and scroll sideways
+            // when there are more than fit.
+            GeometryReader { geo in
+                let count = CGFloat(max(setlist.columns.count, 1))
+                let free = geo.size.width - 20 - Self.addTileWidth - 10 * count
+                let width = max(250, floor(free / count))
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(setlist.columns) { column in
+                            ColumnView(column: column, layout: layout, compact: width < 430,
+                                       selection: $selection, editingColumn: $editingColumn)
+                                .frame(width: width)
+                        }
+                        AddColumnTile { editingColumn = setlist.addColumn() }
+                            .frame(width: Self.addTileWidth)
+                    }
+                    .padding(10)
+                    .frame(height: geo.size.height)
+                }
+            }
+
+            Divider()
+            Text("Drag to reorder or to another column · click a column's name to rename it · double-click to play a video or show a loop · right-click for more")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(8)
+        }
+    }
+}
+
+/// One named column: an artist or a part of the show.
+struct ColumnView: View {
+    @EnvironmentObject var setlist: Setlist
+    @EnvironmentObject var engine: PlaybackEngine
+    let column: ShowColumn
+    let layout: SetlistLayout
+    let compact: Bool
+    @Binding var selection: Set<UUID>
+    var editingColumn: FocusState<UUID?>.Binding
+
+    var body: some View {
+        let rows = setlist.cues(in: column.id)
+        let videos = rows.filter { !$0.isLoop }
+        let index = setlist.columns.firstIndex { $0.id == column.id } ?? 0
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                TextField("Name this column", text: Binding(get: { column.name },
+                                                            set: { setlist.renameColumn(column.id, to: $0) }))
+                    .textFieldStyle(.plain)
+                    .font(.headline)
+                    .focused(editingColumn, equals: column.id)
+                    .onSubmit {
+                        showLog("Column named \(setlist.columnName(column.id))")
+                        editingColumn.wrappedValue = nil   // back to the show keys (Space, arrows …)
+                    }
+                    .help("Click to rename this column")
+                Text("\(videos.count) \(videos.count == 1 ? "video" : "videos")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                Menu {
+                    Button("Add Videos to This Column…") { setlist.chooseVideos(into: column.id) }
+                    Button("Add Loop to the Top of This Column…") { setlist.chooseLoopRow(column: column.id, at: 0) }
+                    Divider()
+                    Button("Rename") { editingColumn.wrappedValue = column.id }
+                    Button("Move Column Left") { setlist.moveColumn(column.id, by: -1) }
+                        .disabled(index == 0)
+                    Button("Move Column Right") { setlist.moveColumn(column.id, by: 1) }
+                        .disabled(index == setlist.columns.count - 1)
+                    Divider()
+                    Button("Remove Column (its videos move to the next column over)") { setlist.removeColumn(column.id) }
+                        .disabled(setlist.columns.count == 1)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Column options")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            Divider()
+
+            if rows.isEmpty {
+                ColumnDropZone(column: column.id)
             } else {
                 List(selection: $selection) {
-                    ForEach(setlist.cues) { cue in
-                        SetlistRow(cue: cue, layout: layout)
+                    ForEach(rows) { cue in
+                        SetlistRow(cue: cue, layout: layout, compact: compact)
                             .tag(cue.id)
+                            .itemProvider { NSItemProvider(object: cue.id.uuidString as NSString) }
                     }
-                    .onMove { setlist.move(from: $0, to: $1) }
-                    .onInsert(of: [.fileURL]) { index, providers in
-                        loadFileURLs(providers) { setlist.add(urls: $0, at: index) }
+                    .onMove { setlist.move(in: column.id, from: $0, to: $1) }
+                    .onInsert(of: [.fileURL, .plainText]) { index, providers in
+                        receiveDrop(providers, into: column.id, at: index, setlist: setlist)
                     }
                 }
                 .listStyle(.inset(alternatesRowBackgrounds: true))
@@ -76,24 +168,99 @@ struct SetlistPane: View {
                     selection.removeAll()
                 }
                 .contextMenu(forSelectionType: UUID.self) { ids in
-                    rowMenu(ids)
+                    RowMenu(ids: ids, selection: $selection)
                 } primaryAction: { ids in
                     // Double-click plays a video now, or shows a loop now.
                     if let id = ids.first { engine.playNow(id) }
                 }
             }
+        }
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.03)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.12)))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
 
-            Divider()
-            Text("Drag to reorder · drop videos from Finder · double-click to play a video or show a loop · right-click for more")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(8)
+/// What a column accepts when something is dropped on it: videos from Finder, or setlist rows dragged
+/// from another column.
+func receiveDrop(_ providers: [NSItemProvider], into column: UUID, at index: Int?, setlist: Setlist) {
+    let files = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+    if !files.isEmpty {
+        loadFileURLs(files) { setlist.add(urls: $0, to: column, at: index) }
+        return
+    }
+    let group = DispatchGroup()
+    final class Found { var ids: [UUID] = [] }
+    let found = Found()
+    for provider in providers where provider.canLoadObject(ofClass: NSString.self) {
+        group.enter()
+        _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+            DispatchQueue.main.async {
+                if let text = object as? NSString, let id = UUID(uuidString: text as String) { found.ids.append(id) }
+                group.leave()
+            }
         }
     }
+    group.notify(queue: .main) {
+        guard !found.ids.isEmpty else { return }
+        setlist.moveRows(Set(found.ids), to: column, at: index)
+    }
+}
 
-    @ViewBuilder
-    private func rowMenu(_ ids: Set<UUID>) -> some View {
+/// An empty column: drop videos here, or add them.
+struct ColumnDropZone: View {
+    @EnvironmentObject var setlist: Setlist
+    let column: UUID
+    @State private var targeted = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "film.stack")
+                .font(.system(size: 30))
+                .foregroundStyle(.secondary)
+            Text("Drop videos here").foregroundStyle(.secondary)
+            Button("Add Videos…") { setlist.chooseVideos(into: column) }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(targeted ? Color.accentColor.opacity(0.12) : Color.clear)
+        .onDrop(of: [.fileURL, .plainText], isTargeted: $targeted) { providers in
+            receiveDrop(providers, into: column, at: 0, setlist: setlist)
+            return true
+        }
+    }
+}
+
+/// The "+ Column" tile after the last column.
+struct AddColumnTile: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: "plus").font(.title2)
+                Text("Add Column").font(.caption)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .background(RoundedRectangle(cornerRadius: 8)
+            .strokeBorder(Color.primary.opacity(0.2), style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
+        .help("Adds a column you can name, for an artist or a part of the show")
+    }
+}
+
+/// The right-click menu for setlist rows.
+struct RowMenu: View {
+    @EnvironmentObject var setlist: Setlist
+    @EnvironmentObject var engine: PlaybackEngine
+    let ids: Set<UUID>
+    @Binding var selection: Set<UUID>
+
+    var body: some View {
         let rows = setlist.cues.filter { ids.contains($0.id) }
+        let fromColumns = Set(rows.map { setlist.columnID(of: $0) })
         if rows.count == 1, let cue = rows.first {
             if cue.isLoop {
                 Button("Show This Loop Now") { engine.showLoop(row: cue.id) }
@@ -115,6 +282,14 @@ struct SetlistPane: View {
             Button(allLoops ? "Use as Videos" : "Use as Loops") { setlist.setLoopRows(ids, !allLoops) }
             Divider()
         }
+        if !rows.isEmpty && setlist.columns.count > 1 {
+            Menu("Move to Column") {
+                ForEach(setlist.columns.filter { !(fromColumns.count == 1 && fromColumns.contains($0.id)) }) { column in
+                    Button(setlist.columnName(column.id)) { setlist.moveRows(ids, to: column.id) }
+                }
+            }
+            Divider()
+        }
         if !ids.isEmpty {
             Button("Show in Finder") {
                 let urls = setlist.cues.filter { ids.contains($0.id) }.map { $0.file.url }
@@ -132,14 +307,16 @@ struct SetlistPane: View {
 struct SetlistRow: View {
     let cue: Cue
     let layout: SetlistLayout
+    var compact = false
 
     var body: some View {
         if cue.isLoop {
-            LoopRow(cue: cue, part: layout.parts[cue.id])
+            LoopRow(cue: cue, part: layout.parts[cue.id], compact: compact)
         } else {
             CueRow(cue: cue,
                    number: layout.videoNumber[cue.id] ?? 0,
-                   loopAbove: layout.loopAbove[cue.id].flatMap { layout.parts[$0] })
+                   loopAbove: layout.loopAbove[cue.id].flatMap { layout.parts[$0] },
+                   compact: compact)
         }
     }
 }
@@ -151,15 +328,17 @@ struct CueRow: View {
     let number: Int
     /// The part of the show this video is in (the loop row above it).
     let loopAbove: SetlistLayout.Part?
+    /// Narrow column: smaller picture and number.
+    var compact = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: compact ? 8 : 12) {
             Text("\(number)")
-                .font(.system(.title3, design: .rounded).monospacedDigit())
+                .font(.system(compact ? .body : .title3, design: .rounded).monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 32, alignment: .trailing)
+                .frame(width: compact ? 22 : 32, alignment: .trailing)
             Thumbnail(image: setlist.thumbnails[cue.file.path])
-                .frame(width: 112, height: 63)
+                .frame(width: compact ? 72 : 112, height: compact ? 40 : 63)
             VStack(alignment: .leading, spacing: 3) {
                 Text(cue.title).font(.headline).lineLimit(1)
                 HStack(spacing: 8) {
@@ -204,22 +383,23 @@ struct LoopRow: View {
     @EnvironmentObject var engine: PlaybackEngine
     let cue: Cue
     let part: SetlistLayout.Part?
+    var compact = false
 
     private var coverage: String {
         guard let part, !part.videos.isEmpty else {
-            return "No videos below it yet: drag it above the first video it should follow"
+            return compact ? "No videos below it yet" : "No videos below it yet: drag it above the first video it should follow"
         }
         return "Plays after " + videosText(part.videos)
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: compact ? 8 : 12) {
             Image(systemName: "infinity")
-                .font(.system(size: 17, weight: .bold))
+                .font(.system(size: compact ? 14 : 17, weight: .bold))
                 .foregroundStyle(.orange)
-                .frame(width: 32, alignment: .trailing)
+                .frame(width: compact ? 22 : 32, alignment: .trailing)
             Thumbnail(image: setlist.thumbnails[cue.file.path])
-                .frame(width: 112, height: 63)
+                .frame(width: compact ? 72 : 112, height: compact ? 40 : 63)
                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.orange, lineWidth: 2))
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -277,27 +457,6 @@ struct Thumbnail: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 5))
-    }
-}
-
-struct EmptyDropZone: View {
-    @EnvironmentObject var setlist: Setlist
-    @State private var targeted = false
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "film.stack")
-                .font(.system(size: 44))
-                .foregroundStyle(.secondary)
-            Text("Drop videos here").font(.title3)
-            Button("Add Videos…") { setlist.chooseVideos() }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(targeted ? Color.accentColor.opacity(0.12) : Color.clear)
-        .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
-            loadFileURLs(providers) { setlist.add(urls: $0) }
-            return true
-        }
     }
 }
 
