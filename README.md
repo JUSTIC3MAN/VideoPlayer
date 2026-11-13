@@ -1,6 +1,6 @@
 # VideoPlayer
 
-A Mac video player for live shows. Load the videos and put them in order. Each time you press **Next**, the next video plays. When a video ends, a **loop visual** plays on repeat until you press Next again.
+A Mac video player for live shows. Load the videos and put them in order. Each time you press **Next** (or **A** on an Xbox controller), the next video plays. When a video ends, a **loop visual** plays on repeat until you press Next again. Each part of the show can have its own loop.
 
 It's built for the screen behind the band. There's a control window on the laptop and a full-screen output on the projector or second display.
 
@@ -8,12 +8,53 @@ It's built for the screen behind the band. There's a control window on the lapto
 
 - **Setlist.** Add videos with the button or by dropping them in from Finder, then drag them into order. Double-click a video to play it right away. Right-click a video for more options.
 - **Next.** Plays the video marked NEXT. The next video is already loaded in a second player, so it starts instantly.
+- **Previous.** Plays the video before the one playing now (or before the one whose loop is up). On the first video it starts it again.
+- **Pause.** Freezes the video or loop on screen, and its sound. Press again to carry on.
 - **Seek bar.** Click or drag the time bar under the preview to jump to any point in the playing video.
-- **Loop visuals (up to 3, taking turns).** When a video ends, the picture fades into a loop that repeats with no gap until you press Next. Set Loop 1, 2 and 3 and they take turns by the video's place in the setlist: after video 1 comes Loop 1, after video 2 Loop 2, after video 3 Loop 3, after video 4 Loop 1 again, and so on (empty slots are skipped). Each row in the setlist shows which loop follows it. Any video can have its own loop instead: right-click it and choose *Choose Loop for After This Video…*.
+- **Loops for each part of the show.** Any video in the setlist can be a loop: select it and click **Use as Loop** (or right-click it). A loop plays after every video below it, up to the next loop, with no gap until you press Next. So with a loop above videos 1–4 and another above videos 5–7, the first loop plays between videos 1–4 and the second between videos 5–7. See [Loops](#loops-a-different-loop-for-each-part-of-the-show) below.
+- **Xbox controller.** A = Next, B = Previous, Y = Pause. See [Xbox controller](#xbox-controller) below.
 - **Output.** A full-screen window on the screen you pick, with no mouse pointer. The control window has a live preview of exactly what's on the output.
 - **Crossfade.** 0–3 seconds between videos and into the loop (0 = hard cut). A second press of Next during a fade is ignored, so a double-tap on a clicker can't skip a song.
-- **Blackout, Stop, Back.** Blackout fades the screen to black. Stop fades out and resets NEXT to the first video. Back moves NEXT up one video without playing anything.
-- **Remembers your setlist.** It reopens where you left off. Use *Save Setlist As…* and *Open Setlist…* (File menu) to keep one setlist per show. If a video file is moved or renamed, the setlist still finds it.
+- **Blackout, Stop, Back One.** Blackout fades the screen to black. Stop fades out and resets NEXT to the first video. Back One moves NEXT up one video without playing anything.
+- **Remembers your setlist.** It reopens where you left off. Use *Save Setlist As…* and *Open Setlist…* (File menu) to keep one setlist per show. If a video file is moved or renamed, the setlist still finds it. Setlists from older versions open too: their Loop 1 becomes a loop at the top of the setlist, and Loops 2 and 3 go at the end, ready to drag into place.
+
+## Loops: a different loop for each part of the show
+
+A loop row in the setlist plays after every video below it, up to the next loop row. Loop rows have an orange ∞ and show which videos they cover, and each video shows the loop that follows it.
+
+Example: the first 4 videos with one artist's logo loop, then the next 3 with another's:
+
+```
+∞  Loop 1: artist A logo     plays after videos 1–4
+1  song A1
+2  song A2
+3  song A3
+4  song A4
+∞  Loop 2: artist B logo     plays after videos 5–7
+5  song B1
+6  song B2
+7  song B3
+```
+
+- **Make a loop:** select any video in the setlist and click **Use as Loop** (above the setlist), or right-click it and choose *Use as Loop*. *Use as Video* turns it back.
+- **Add a loop from a file:** select the first video of a part and click **Add Loop…** (in the Loops box). The loop goes above that video. With nothing selected it goes at the top (first loop) or at the end.
+- **Choose how many videos a loop covers:** drag the loop row up or down. It covers everything below it until the next loop row.
+- **Show a loop now:** double-click its row (or right-click → *Show This Loop Now*). It stays up until the next video plays.
+- **One video with its own loop:** right-click the video → *Choose Loop for After This Video…*. *Use the Loop Above It* undoes that.
+- Next, Previous and Back One skip loop rows, so loops are never played as songs. Videos with no loop row above them go to black when they end; the Loops box warns about this.
+- The Loops box (right side) lists every loop and the videos it covers. Click one to find it in the setlist.
+
+## Xbox controller
+
+| Button | Action |
+|---|---|
+| A | Next video |
+| B | Previous video |
+| Y | Pause / resume |
+
+**Pair it once:** press the Xbox button to turn the controller on, then hold the pair button on its top edge until the Xbox button flashes fast. On the Mac, open **System Settings → Bluetooth** and click **Connect** next to the controller. After that it connects by itself whenever it's turned on.
+
+The control window shows the controller's name under the transport buttons when it's connected. Supported: Xbox Wireless Controller (model 1708 with Bluetooth, and Series X|S), Xbox Elite Series 2 and Xbox Adaptive Controller. PlayStation controllers work too, with the buttons in the same places (✕ Next, ○ Previous, △ Pause). The buttons also work while another app (Ableton, say) is in front; on some older macOS versions they only work while VideoPlayer is the front app. A second press of A or B during a fade is ignored, just like Next.
 
 ## Keys (presentation clickers work too)
 
@@ -21,6 +62,7 @@ It's built for the screen behind the band. There's a control window on the lapto
 |---|---|
 | Space, →, Page Down | Next video |
 | ←, Page Up | Move NEXT back one (doesn't play) |
+| P | Pause / resume |
 | L | Show the loop visual now |
 | B or . | Blackout on / off |
 | F | Show / hide the output |
@@ -80,13 +122,14 @@ install.sh                         one-line install / update
 .github/workflows/release.yml      GitHub builds the app and publishes each release
 Sources/VideoPlayer/
   Updater.swift                    Check for Updates
-  VideoPlayerApp.swift                app, menus, keyboard shortcuts
-  ControlView.swift                control window (setlist, preview, transport, settings)
-  PlaybackEngine.swift             the two video players, the loop, fades, Next logic
+  VideoPlayerApp.swift             app, menus, keyboard shortcuts
+  Gamepad.swift                    Xbox controller buttons (A Next, B Previous, Y Pause)
+  ControlView.swift                control window (setlist, loops, preview, transport, settings)
+  PlaybackEngine.swift             the two video players, the loop, fades, Next / Previous / Pause
   StageView.swift                  the picture (used by the output window and the preview)
   OutputController.swift           full-screen output window and screen choice
-  Setlist.swift                    setlist, settings, saving, thumbnails
-  Models.swift                     data types
+  Setlist.swift                    setlist (videos and loop rows), settings, saving, thumbnails
+  Models.swift                     data types, loop parts
 ```
 
 ## Build it yourself (optional)
@@ -102,4 +145,4 @@ cd VideoPlayer
 
 ## PC preview
 
-`pc-preview/VideoPlayer Preview.html` is a browser copy of the same interface, for checking the layout and flow on Windows. Open it in Chrome or Edge and drop some videos in. It has the same buttons, keys and Next / loop behavior. Open Setlist, Save Setlist, Show in Finder and the screen picker only work in the Mac app.
+`pc-preview/VideoPlayer Preview.html` is a browser copy of the same interface, for checking the layout and flow on Windows. Open it in Chrome or Edge and drop some videos in. It has the same buttons, keys, loops and Next / Previous / Pause behavior, and an Xbox controller works in it too: plug it in or pair it with the PC, then press any button so the browser sees it. Open Setlist, Save Setlist, Show in Finder and the screen picker only work in the Mac app.

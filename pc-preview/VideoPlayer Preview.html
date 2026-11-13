@@ -823,11 +823,21 @@ $("audioChk").onchange = e => { S.videoAudio = e.target.checked; E.slots.forEach
 
 // Selection, double-click, right-click
 const list = $("list");
+// Double-click is detected here (two presses on the same row within 0.45 s): rows are redrawn on each press,
+// and the browser doesn't send a dblclick event when the row under the mouse was replaced in between.
+let lastPress = { id: null, t: 0 };
 list.addEventListener("mousedown", e => {
   const row = e.target.closest(".row");
   if (!row) { if (e.button === 0) { S.selection.clear(); renderList(); } return; }
   const id = +row.dataset.id;
   if (e.button === 2) { if (!S.selection.has(id)) { S.selection = new Set([id]); anchorId = id; renderList(); } return; }
+  const now = performance.now(), plain = !(e.shiftKey || e.ctrlKey || e.metaKey);
+  if (e.button === 0 && plain && lastPress.id === id && now - lastPress.t < 450) {
+    lastPress = { id: null, t: 0 };
+    playNow(id);
+    return;
+  }
+  lastPress = { id: e.button === 0 && plain ? id : null, t: now };
   if (e.shiftKey && anchorId != null) {
     const a = idx(anchorId), b = idx(id);
     S.selection = new Set(S.cues.slice(Math.min(a, b), Math.max(a, b) + 1).map(c => c.id));
@@ -838,7 +848,7 @@ list.addEventListener("mousedown", e => {
   }
   renderList();
 });
-list.addEventListener("dblclick", e => { const row = e.target.closest(".row"); if (row) playNow(+row.dataset.id); });
+
 
 const ctx = $("ctx");
 function hideCtx() { ctx.style.display = "none"; }
