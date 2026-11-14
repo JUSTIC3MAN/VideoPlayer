@@ -6,8 +6,9 @@ import UniformTypeIdentifiers
 /// The setlist and show settings. Saved automatically, so the app reopens where you left off.
 ///
 /// The setlist holds videos and loops in named columns (artists or parts of the show). The show plays the
-/// columns left to right, each from top to bottom. A loop row plays after every video below it, up to the
-/// next loop row, so a loop at the top of a column plays after that column's videos.
+/// columns left to right, each from top to bottom. A loop plays after the videos whose numbers were typed
+/// into it, or, with none typed, after every video below it up to the next such loop; so a loop at the top
+/// of a column plays after that column's videos. A loop no video plays is a stop of its own.
 final class Setlist: ObservableObject {
     /// Every row in show order: column by column, left to right, each column top to bottom.
     @Published var cues: [Cue] = [] { didSet { scheduleSave() } }
@@ -16,6 +17,8 @@ final class Setlist: ObservableObject {
     /// The column whose name is being typed (not saved). Names are plain text otherwise, so the show keys
     /// (Space, arrows, P …) never land in a name field by accident.
     @Published var renamingColumn: UUID?
+    /// The loop whose video numbers are being typed (not saved).
+    @Published var editingLoopNumbers: UUID?
     @Published var crossfade: Double = 0.5 { didSet { scheduleSave() } }
     @Published var fillScreen = false { didSet { scheduleSave() } }
     @Published var videoAudio = true { didSet { scheduleSave() } }
@@ -193,8 +196,9 @@ final class Setlist: ObservableObject {
     }
 
     /// The loop that plays after a row, and the loop row it comes from (nil for a video's own loop).
-    /// A video uses its own loop if it has one, otherwise the nearest loop row above it; with no loop row
-    /// above it the screen goes black. Before any video has played (cueID nil) it is the first loop row.
+    /// A video uses its own loop if it has one, else the loop whose typed numbers include it, else the nearest
+    /// loop row above it with no typed numbers; with none of those the screen goes black. A loop row is its
+    /// own loop. Before any video has played (cueID nil) it is the first loop row.
     func loopSource(cueID: UUID?) -> (ref: FileRef?, rowID: UUID?) {
         guard let cueID, let i = cues.firstIndex(where: { $0.id == cueID }) else {
             let first = cues.first { $0.isLoop }
@@ -203,8 +207,63 @@ final class Setlist: ObservableObject {
         let cue = cues[i]
         if cue.isLoop { return (cue.file, cue.id) }
         if let own = cue.loop { return (own, nil) }
-        if let row = cues[..<i].last(where: { $0.isLoop }) { return (row.file, row.id) }
+        if let typed = cues.first(where: { $0.isLoop && ($0.covers?.contains(cueID) ?? false) }) {
+            return (typed.file, typed.id)
+        }
+        if let row = cues[..<i].last(where: { $0.isLoop && $0.covers == nil }) { return (row.file, row.id) }
         return (nil, nil)
+    }
+
+    /// Typed video numbers for a loop: "1,2,3,4", "1-4", "5 6", "1-3, 7". The loop then plays after those
+    /// videos (and they leave any other loop's numbers, as each video has one loop). Empty: back to the videos
+    /// below it. Returns false when the text can't be read.
+    @discardableResult
+    func setLoopNumbers(_ loopID: UUID, _ text: String) -> Bool {
+        guard let i = cues.firstIndex(where: { $0.id == loopID && $0.isLoop }) else { return false }
+        var rows = cues
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            guard rows[i].covers != nil else { return true }
+            rows[i].covers = nil
+            cues = rows
+            showLog("Loop numbers: \(rows[i].title) → the videos below it; loops: \(loopSummary())")
+            return true
+        }
+        guard let numbers = Self.parseNumbers(text) else {
+            showLog("Loop numbers: can't read \"\(text)\"")
+            NSSound.beep()
+            return false
+        }
+        let layout = SetlistLayout(cues: cues)
+        let videoAt = Dictionary(uniqueKeysWithValues: layout.videoNumber.map { ($1, $0) })
+        let ids = numbers.compactMap { videoAt[$0] }
+        for j in rows.indices where j != i && rows[j].isLoop {
+            if let covers = rows[j].covers { rows[j].covers = covers.filter { !ids.contains($0) } }
+        }
+        rows[i].covers = ids
+        cues = rows
+        let missing = numbers.filter { videoAt[$0] == nil }
+        showLog("Loop numbers: \(rows[i].title) → videos \(videoRunsForLog(numbers.filter { videoAt[$0] != nil }))"
+                + (missing.isEmpty ? "" : " (no video \(missing.map(String.init).joined(separator: ", ")))"))
+        return true
+    }
+
+    /// "1,2,3,4" → [1,2,3,4]; "1-4" → [1,2,3,4]; "1-3, 7" → [1,2,3,7]. nil when something isn't a number.
+    static func parseNumbers(_ text: String) -> [Int]? {
+        let tidy = text.replacingOccurrences(of: #"\s*[-–—]\s*"#, with: "-", options: .regularExpression)
+        var result: [Int] = []
+        for token in tidy.split(whereSeparator: { ", ;\t".contains($0) }) {
+            let ends = token.split(separator: "-", omittingEmptySubsequences: false)
+            if ends.count == 1, let n = Int(ends[0]), n > 0 {
+                result.append(n)
+            } else if ends.count == 2, let a = Int(ends[0]), let b = Int(ends[1]), a > 0, a <= b, b - a < 1000 {
+                result += Array(a...b)
+            } else {
+                return nil
+            }
+        }
+        var seen = Set<Int>()
+        let unique = result.filter { seen.insert($0).inserted }
+        return unique.isEmpty ? nil : unique
     }
 
     func loopFor(cueID: UUID?) -> FileRef? {
@@ -224,10 +283,8 @@ final class Setlist: ObservableObject {
     func loopSummary() -> String {
         let layout = SetlistLayout(cues: cues)
         let loops = cues.filter { $0.isLoop }.map { cue -> String in
-            guard let part = layout.parts[cue.id], let first = part.firstVideo, let last = part.lastVideo else {
-                return "\(cue.title) (no videos)"
-            }
-            return "\(cue.title) (videos \(first)-\(last))"
+            guard let part = layout.parts[cue.id], !part.videos.isEmpty else { return "\(cue.title) (no videos)" }
+            return "\(cue.title) (videos \(videoRunsForLog(part.videos)))"
         }
         return loops.isEmpty ? "none" : loops.joined(separator: ", ")
     }

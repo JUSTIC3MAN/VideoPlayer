@@ -123,7 +123,10 @@ struct ColumnView: View {
                         .font(.headline)
                         .focused($nameFocused)
                         .onSubmit { finishRenaming() }   // Return: back to the show keys (Space, arrows …)
-                        .onAppear { DispatchQueue.main.async { nameFocused = true } }
+                        .onAppear {
+                            // A moment's wait, so a menu that just closed (Rename) doesn't take the focus back
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { nameFocused = true }
+                        }
                         .onChange(of: nameFocused) { focused in if !focused { finishRenaming() } }
                 } else {
                     Text(setlist.columnName(column.id))
@@ -278,7 +281,14 @@ struct RowMenu: View {
         let fromColumns = Set(rows.map { setlist.columnID(of: $0) })
         if rows.count == 1, let cue = rows.first {
             if cue.isLoop {
-                Button("Show This Loop Now") { engine.showLoop(row: cue.id) }
+                let ownStop = SetlistLayout(cues: setlist.cues).isStop(cue.id)
+                Button(ownStop ? "Play Now" : "Show This Loop Now") { engine.playNow(cue.id) }
+                if ownStop { Button("Set as Next") { engine.arm(cue.id) } }
+                Divider()
+                Button("Type Its Video Numbers…") { setlist.editingLoopNumbers = cue.id }
+                if cue.covers != nil {
+                    Button("Use the Videos Below It") { setlist.setLoopNumbers(cue.id, "") }
+                }
                 Divider()
                 Button("Use as Video") { setlist.setLoopRows([cue.id], false) }
             } else {
@@ -330,7 +340,7 @@ struct SetlistRow: View {
         } else {
             CueRow(cue: cue,
                    number: layout.videoNumber[cue.id] ?? 0,
-                   loopAbove: layout.loopAbove[cue.id].flatMap { layout.parts[$0] },
+                   loopPart: layout.loopOf[cue.id].flatMap { layout.parts[$0] },
                    compact: compact)
         }
     }
@@ -341,8 +351,8 @@ struct CueRow: View {
     @EnvironmentObject var engine: PlaybackEngine
     let cue: Cue
     let number: Int
-    /// The part of the show this video is in (the loop row above it).
-    let loopAbove: SetlistLayout.Part?
+    /// The loop that plays after this video (typed numbers, or the loop above it).
+    let loopPart: SetlistLayout.Part?
     /// Narrow column: smaller picture and number.
     var compact = false
 
@@ -365,17 +375,17 @@ struct CueRow: View {
                         // Narrow column: just which loop follows
                         if cue.loop != nil {
                             Label("own loop", systemImage: "repeat").lineLimit(1)
-                        } else if let part = loopAbove {
+                        } else if let part = loopPart {
                             Label("Loop \(part.number)", systemImage: "repeat").lineLimit(1)
                         } else {
                             Label("no loop", systemImage: "repeat").lineLimit(1)
                         }
                     } else if let loop = cue.loop {
                         Label("then its own loop: \(loop.name)", systemImage: "repeat").lineLimit(1)
-                    } else if let part = loopAbove {
+                    } else if let part = loopPart {
                         Label("then Loop \(part.number): \(part.title)", systemImage: "repeat").lineLimit(1)
                     } else {
-                        Label("then black (no loop above it)", systemImage: "repeat").lineLimit(1)
+                        Label("then black (no loop)", systemImage: "repeat").lineLimit(1)
                     }
                 }
                 .font(.caption)
@@ -408,7 +418,8 @@ struct CueRow: View {
     }
 }
 
-/// A loop row. Its loop plays after every video below it, up to the next loop row.
+/// A loop row. It plays after its videos: the ones whose numbers were typed into it, or (none typed) the
+/// videos below it. With no videos it is a stop of its own: Next shows it.
 struct LoopRow: View {
     @EnvironmentObject var setlist: Setlist
     @EnvironmentObject var engine: PlaybackEngine
@@ -416,12 +427,7 @@ struct LoopRow: View {
     let part: SetlistLayout.Part?
     var compact = false
 
-    private var coverage: String {
-        guard let part, !part.videos.isEmpty else {
-            return compact ? "No videos below it yet" : "No videos below it yet: drag it above the first video it should follow"
-        }
-        return (compact ? "After " : "Plays after ") + videosText(part.videos)
-    }
+    private var ownStop: Bool { part?.videos.isEmpty ?? true }
 
     var body: some View {
         HStack(spacing: compact ? 8 : 12) {
@@ -433,7 +439,7 @@ struct LoopRow: View {
                 .frame(width: compact ? 72 : 112, height: compact ? 40 : 63)
                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.orange, lineWidth: 2))
                 .overlay(alignment: .bottom) {
-                    if compact { badge.padding(.bottom, 2) }   // narrow column: on the picture
+                    if compact { VStack(spacing: 1) { badges }.padding(.bottom, 2) }   // narrow column: on the picture
                 }
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -443,10 +449,13 @@ struct LoopRow: View {
                         .fixedSize()
                     Text(cue.title).font(.headline).lineLimit(1)
                 }
-                Text(coverage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(ownStop ? (compact ? "Own stop" : "Its own stop ·") : (compact ? "After" : "Plays after"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                    LoopNumbersField(loopID: cue.id, part: part, compact: compact)
+                }
                 if setlist.missing.contains(cue.file.path) {
                     Label("File not found", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
@@ -454,18 +463,84 @@ struct LoopRow: View {
                 }
             }
             Spacer(minLength: 8)
-            if !compact { badge }
+            if !compact { badges }
         }
         .padding(.vertical, 4)
     }
 
-    @ViewBuilder private var badge: some View {
+    @ViewBuilder private var badges: some View {
         if engine.phase == .loop && engine.loopRowID == cue.id {
             StateBadge(text: engine.paused ? "PAUSED" : "ON SCREEN",
                        color: engine.paused ? .yellow : .orange,
                        textColor: engine.paused ? .black : .white, small: compact)
         }
+        if engine.armedCueID == cue.id {
+            StateBadge(text: "NEXT", color: .blue, small: compact)
+        }
     }
+}
+
+/// A loop's video numbers. Click it and type them (1,2,3,4 or 1-4), then Return. An empty box: the videos
+/// below the loop.
+struct LoopNumbersField: View {
+    @EnvironmentObject var setlist: Setlist
+    let loopID: UUID
+    let part: SetlistLayout.Part?
+    var compact = false
+    @State private var text = ""
+    @State private var original = ""
+    @FocusState private var focused: Bool
+
+    private var editing: Bool { setlist.editingLoopNumbers == loopID }
+    private var videos: [Int] { part?.videos ?? [] }
+
+    var body: some View {
+        if editing {
+            TextField("1,2,3,4", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .font(.caption.monospacedDigit())
+                .frame(width: compact ? 84 : 110)
+                .focused($focused)
+                .onAppear {
+                    text = part?.typed == true ? numbersForTyping(videos) : ""
+                    original = text
+                    // A moment's wait, so a menu that just closed doesn't take the focus back
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { focused = true }
+                }
+                .onSubmit { finish(apply: true) }   // Return
+                .onChange(of: focused) { isFocused in
+                    if !isFocused { finish(apply: text != original) }   // clicked elsewhere
+                }
+        } else {
+            Button { setlist.editingLoopNumbers = loopID } label: {
+                Text(videos.isEmpty ? "type numbers" : videosText(videos))
+                    .font(.caption.monospacedDigit())
+                    .lineLimit(1)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.45)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(part?.typed == true ? Color.primary : Color.secondary)
+            .help("Click and type the numbers of the videos this loop plays after, like 1,2,3,4 or 1-4. Leave it empty to use the videos below it.")
+        }
+    }
+
+    private func finish(apply: Bool) {
+        guard editing else { return }
+        setlist.editingLoopNumbers = nil
+        if apply { setlist.setLoopNumbers(loopID, text) }
+    }
+}
+
+/// "1-4", "1-2, 5": video numbers the way they are typed.
+func numbersForTyping(_ numbers: [Int]) -> String {
+    var runs: [(first: Int, last: Int)] = []
+    for n in numbers.sorted() {
+        if let last = runs.last, last.last + 1 == n { runs[runs.count - 1].last = n } else { runs.append((n, n)) }
+    }
+    return runs.map { $0.first == $0.last ? "\($0.first)" : "\($0.first)-\($0.last)" }.joined(separator: ", ")
 }
 
 struct StateBadge: View {
@@ -763,17 +838,17 @@ struct LoopSchedule: View {
                         .frame(width: 72, height: 40)
                     Text(cue.title).lineLimit(1)
                     Spacer(minLength: 4)
-                    Text(videosText(part?.videos ?? []))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                        .lineLimit(1)
+                    if part?.videos.isEmpty ?? true {
+                        Text("own stop").font(.caption).foregroundStyle(.secondary).fixedSize()
+                    }
+                    LoopNumbersField(loopID: cue.id, part: part, compact: true)
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { selection = [cue.id] }
                 .help("Click to select it in the setlist")
             }
             if !loops.isEmpty && !layout.videosWithoutLoop.isEmpty {
-                Label("\(videosText(layout.videosWithoutLoop).capitalizedFirst) \(layout.videosWithoutLoop.count == 1 ? "has" : "have") no loop above, so the screen goes black after.",
+                Label("\(videosText(layout.videosWithoutLoop).capitalizedFirst) \(layout.videosWithoutLoop.count == 1 ? "has" : "have") no loop, so the screen goes black after.",
                       systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -781,7 +856,7 @@ struct LoopSchedule: View {
             }
             Button("Add Loop…") { setlist.chooseLoopRow(insertAt: insertIndex) }
                 .help("Adds a loop above the selected row (with nothing selected: at the top, or at the end if there are loops already)")
-            Text("Any video can be a loop: select it and click Use as Loop, or right-click it. A loop plays after every video below it, up to the next loop, so each loop covers one part of the show. Drag a loop up or down to change how many videos it covers. Double-click a loop to show it now.")
+            Text("Any video can be a loop: select it and click Use as Loop, or right-click it. Click a loop's numbers and type the videos it plays after (1,2,3,4 or 1-4). With no numbers typed, a loop plays after the videos below it, up to the next loop. A loop with no videos is a stop of its own: Next shows it. Double-click a loop to show it now.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

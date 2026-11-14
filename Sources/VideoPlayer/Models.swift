@@ -37,8 +37,10 @@ struct ShowColumn: Identifiable, Codable, Equatable {
 
 /// One row of the setlist: a video, or a loop.
 ///
-/// Next never plays a loop row. A loop row's video repeats after every video below it, up to the next
-/// loop row, so each loop row starts a part of the show. Any video can be turned into a loop and back.
+/// A loop row's video repeats after the videos it belongs to: the ones whose numbers were typed into it, or,
+/// with no numbers typed, every video below it up to the next such loop row. A loop that no video plays
+/// (an artist with only loops) is a stop of its own for Next and Previous. Any video can be turned into a
+/// loop and back.
 struct Cue: Identifiable, Codable, Equatable {
     var id = UUID()
     var file: FileRef
@@ -49,16 +51,20 @@ struct Cue: Identifiable, Codable, Equatable {
     var isLoop = false
     /// The column it is in. nil (setlists from before columns): the first column.
     var column: UUID?
+    /// For a loop row: the videos it plays after, picked by typing their numbers. They stay with those videos
+    /// when the setlist is reordered. nil: the videos below it instead.
+    var covers: [UUID]?
 
     var title: String { file.name }
 
-    init(file: FileRef, isLoop: Bool = false, column: UUID? = nil) {
+    init(file: FileRef, isLoop: Bool = false, column: UUID? = nil, covers: [UUID]? = nil) {
         self.file = file
         self.isLoop = isLoop
         self.column = column
+        self.covers = covers
     }
 
-    private enum CodingKeys: String, CodingKey { case id, file, loop, duration, isLoop, column }
+    private enum CodingKeys: String, CodingKey { case id, file, loop, duration, isLoop, column, covers }
 
     // Written out so setlists saved before loop rows existed (no "isLoop") still open.
     init(from decoder: Decoder) throws {
@@ -69,6 +75,7 @@ struct Cue: Identifiable, Codable, Equatable {
         duration = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
         isLoop = try c.decodeIfPresent(Bool.self, forKey: .isLoop) ?? false
         column = try c.decodeIfPresent(UUID.self, forKey: .column)
+        covers = try c.decodeIfPresent([UUID].self, forKey: .covers)
     }
 }
 
@@ -88,52 +95,72 @@ struct ShowFile: Codable {
     var videoAudio: Bool
 }
 
-/// Row numbers and the parts of the show, worked out in one pass over the setlist
-/// (for the setlist rows, the Loops panel and the log).
+/// Row numbers, which loop plays after each video, and the stops for Next, worked out in one pass over the
+/// setlist (for the setlist rows, the Loops panel, the engine and the log).
+///
+/// Which loop plays after a video: its own loop (right-click menu), else the loop whose typed numbers include
+/// it, else the nearest loop row above it that has no typed numbers, else none (black).
 struct SetlistLayout {
     /// One loop row and the videos it plays after.
     struct Part {
         var number: Int               // Loop 1, Loop 2 … in setlist order
         var title: String
-        var firstVideo: Int? = nil    // video numbers; nil = no videos below it yet
-        var lastVideo: Int? = nil
-
-        var videos: [Int] {
-            guard let firstVideo, let lastVideo else { return [] }
-            return Array(firstVideo...lastVideo)
-        }
+        var videos: [Int] = []        // video numbers, in order
+        /// Its videos were picked by typing their numbers (not by where it sits).
+        var typed = false
     }
 
     private(set) var videoNumber: [UUID: Int] = [:]
     /// Keyed by the loop row's id.
     private(set) var parts: [UUID: Part] = [:]
-    /// Video id → the loop row above it.
-    private(set) var loopAbove: [UUID: UUID] = [:]
+    /// Video id → the loop row that plays after it (videos with their own loop or no loop aren't in it).
+    private(set) var loopOf: [UUID: UUID] = [:]
     private(set) var videoCount = 0
     private(set) var loopCount = 0
-    /// Videos with no loop row above them and no loop of their own: the screen goes black after them.
+    /// Videos with no loop at all: the screen goes black after them.
     private(set) var videosWithoutLoop: [Int] = []
+    /// The rows Next and Previous stop on, in show order: every video, and every loop no video plays.
+    private(set) var steps: [UUID] = []
 
     init(cues: [Cue]) {
-        var current: UUID?
+        var typedLoop: [UUID: UUID] = [:]
+        for cue in cues where cue.isLoop {
+            for video in cue.covers ?? [] where typedLoop[video] == nil { typedLoop[video] = cue.id }
+        }
+        var above: UUID?      // the nearest loop row above with no typed numbers
         for cue in cues {
             if cue.isLoop {
                 loopCount += 1
-                parts[cue.id] = Part(number: loopCount, title: cue.title)
-                current = cue.id
+                parts[cue.id] = Part(number: loopCount, title: cue.title, typed: cue.covers != nil)
+                if cue.covers == nil { above = cue.id }
             } else {
                 videoCount += 1
                 videoNumber[cue.id] = videoCount
-                if let current {
-                    loopAbove[cue.id] = current
-                    if parts[current]?.firstVideo == nil { parts[current]?.firstVideo = videoCount }
-                    parts[current]?.lastVideo = videoCount
-                } else if cue.loop == nil {
+                guard cue.loop == nil else { continue }          // it has its own loop
+                if let loop = typedLoop[cue.id] ?? above {
+                    loopOf[cue.id] = loop
+                    parts[loop]?.videos.append(videoCount)
+                } else {
                     videosWithoutLoop.append(videoCount)
                 }
             }
         }
+        steps = cues.filter { !$0.isLoop || (parts[$0.id]?.videos.isEmpty ?? true) }.map(\.id)
     }
+
+    func isStop(_ id: UUID?) -> Bool {
+        guard let id else { return false }
+        return steps.contains(id)
+    }
+}
+
+/// For the log: "1-4", "1-2, 5-5" (always first-last, so a single video reads "3-3").
+func videoRunsForLog(_ numbers: [Int]) -> String {
+    var runs: [(first: Int, last: Int)] = []
+    for n in numbers.sorted() {
+        if let last = runs.last, last.last + 1 == n { runs[runs.count - 1].last = n } else { runs.append((n, n)) }
+    }
+    return runs.map { "\($0.first)-\($0.last)" }.joined(separator: ", ")
 }
 
 /// "video 3", "videos 1–4", "videos 1–2, 5" (empty: "no videos").

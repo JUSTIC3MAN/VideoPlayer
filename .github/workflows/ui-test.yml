@@ -153,6 +153,16 @@ jobs:
           key "keystroke \"n\" using {command down, shift down}"; sleep 1.2
           key "keystroke \"Encore\""; key "key code 36"; sleep 1; shot 23k_added_column_Encore
 
+          step "LOOP NUMBERS AND LOOPS-ONLY STOPS"
+          # loop_2 gets videos 1, 2 and 4 by number, so loop_bars is left with none: a stop of its own
+          rclick "loop_2" $LOOP2;             sleep 1
+          key "keystroke \"Type\""; sleep 0.3; key "key code 36"; sleep 1.2
+          key "keystroke \"1,2,4\""; key "key code 36"; sleep 1; shot 23l_loop2_numbers_1_2_4
+          key "key code 49"; sleep 1.5;                shot 23m_space_shows_loop_bars_as_its_own_stop
+          key "key code 49"; sleep 3.8;                shot 23n_red_then_its_typed_loop_2
+          click "Previous" $PREVIOUS;   sleep 1.5;     shot 23o_previous_back_to_loop_bars
+          click "Stop" $STOP;           sleep 1.5
+
           step "ADD VIDEOS (file window, pick a video by its path)"
           click "Add Videos" $ADD; sleep 3; shot 24_add_videos_after_3s
           sleep 5;                                            shot 25_add_videos_after_8s
@@ -192,7 +202,11 @@ jobs:
                   "Moved song_green to column Kimiko",                     # drag to another column
                   "Moved column Part 2", "Moved column Part 2",            # column menu: left, then right
                   "Added column Part 3", "Column named Encore",            # File → Add Column (⇧⌘N)
-                  "Added 1 video(s)"]
+                  "Loop numbers: loop_2 → videos 1-2, 4-4",                # typed into loop_2
+                  'Play loop "loop_bars"', "Loop visual: loop_bars",       # Space: loop_bars is its own stop
+                  'Play #1 "song_red"', "Loop visual: loop_2",             # Space: red, then its typed loop
+                  'Play loop "loop_bars"',                                 # Previous: back to the loop stop
+                  "Stop", "Added 1 video(s)"]
           i = 0
           for line in log:
               if i < len(want) and want[i] in line:

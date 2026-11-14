@@ -77,6 +77,8 @@ final class PlaybackEngine: ObservableObject {
     private var armedByUser = false
     /// A loop row picked by hand (double-click it). It stays on until the next video plays.
     private var forcedLoop: (row: UUID, file: FileRef)?
+    /// A short dip to black while one loop stop hands over to the next (there is one loop player).
+    private var dipping = false
     private var bag = Set<AnyCancellable>()
 
     init(setlist: Setlist) {
@@ -104,7 +106,7 @@ final class PlaybackEngine: ObservableObject {
             timeTokens.append(token)
         }
 
-        armedCueID = setlist.cues.first { !$0.isLoop }?.id
+        armedCueID = SetlistLayout(cues: setlist.cues).steps.first
 
         // @Published fires before the value changes, so hop to the next run loop pass to read the new value.
         setlist.$cues
@@ -135,7 +137,7 @@ final class PlaybackEngine: ObservableObject {
 
     private func currentVisual() -> StageVisual {
         var v = visual
-        v.black = blackout || phase == .idle
+        v.black = blackout || phase == .idle || dipping
         return v
     }
 
@@ -153,32 +155,38 @@ final class PlaybackEngine: ObservableObject {
         return cues.firstIndex { $0.id == id }
     }
 
-    private func isVideo(_ id: UUID?) -> Bool {
-        guard let i = index(of: id) else { return false }
-        return !cues[i].isLoop
+    // Next, Previous and Back One stop on every video, and on every loop no video plays (an artist with only
+    // loops). Loops that play after videos are skipped: they come up when their videos end.
+
+    private var stops: Set<UUID> { Set(SetlistLayout(cues: cues).steps) }
+
+    private func isStop(_ id: UUID?) -> Bool {
+        guard let id else { return false }
+        return stops.contains(id)
     }
 
-    /// Loop rows are never played by Next, Previous or Back One, so these skip them.
-    private var firstVideoID: UUID? { cues.first { !$0.isLoop }?.id }
+    private var firstStopID: UUID? { SetlistLayout(cues: cues).steps.first }
 
-    /// The video after a row. An unknown row (nothing played yet): the first video.
+    /// The stop after a row. An unknown row (nothing played yet): the first stop.
     private func cueAfter(_ id: UUID?) -> UUID? {
-        guard let i = index(of: id) else { return firstVideoID }
-        return cues[(i + 1)...].first { !$0.isLoop }?.id
+        guard let i = index(of: id) else { return firstStopID }
+        let stops = self.stops
+        return cues[(i + 1)...].first { stops.contains($0.id) }?.id
     }
 
-    /// The position of the video before position i.
-    private func videoIndex(before i: Int) -> Int? {
-        cues[..<i].lastIndex { !$0.isLoop }
+    /// The position of the stop before position i.
+    private func stopIndex(before i: Int) -> Int? {
+        let stops = self.stops
+        return cues[..<i].lastIndex { stops.contains($0.id) }
     }
 
-    /// The video NEXT should point to when it follows the setlist order.
+    /// The row NEXT should point to when it follows the setlist order.
     private var automaticNext: UUID? {
-        playingCueID == nil ? firstVideoID : cueAfter(playingCueID)
+        playingCueID == nil ? firstStopID : cueAfter(playingCueID)
     }
 
     private func cuesChanged() {
-        if armedByUser, isVideo(armedCueID) {
+        if armedByUser, isStop(armedCueID) {
             prepareArmed()                       // keep the hand-picked NEXT (its file may have changed)
         } else {
             armedByUser = false
@@ -204,7 +212,7 @@ final class PlaybackEngine: ObservableObject {
     /// fade (protects against a double-click on a remote skipping a song).
     func next() {
         guard !pressedDuringFade("Next") else { return }
-        guard let i = index(of: armedCueID), !cues[i].isLoop else {
+        guard let i = index(of: armedCueID), isStop(armedCueID) else {
             showLog("Next: nothing armed (setlist empty or at the end)")
             NSSound.beep()
             return
@@ -212,8 +220,8 @@ final class PlaybackEngine: ObservableObject {
         go(to: i)
     }
 
-    /// Previous (B on a game controller): plays the video before the one playing now, or before the one
-    /// whose loop is up. On the first video it starts that video again.
+    /// Previous (B on a game controller): plays the stop before the one playing now (a video, or a loop no
+    /// video plays), or before the one whose loop is up. On the first stop it starts that one again.
     func playPrevious() {
         guard !pressedDuringFade("Previous") else { return }
         guard let current = index(of: playingCueID) else {
@@ -221,7 +229,7 @@ final class PlaybackEngine: ObservableObject {
             NSSound.beep()
             return
         }
-        go(to: videoIndex(before: current) ?? current)
+        go(to: stopIndex(before: current) ?? current)
     }
 
     private func pressedDuringFade(_ action: String) -> Bool {
@@ -243,26 +251,27 @@ final class PlaybackEngine: ObservableObject {
 
     /// Moves NEXT back by one video. Does not play anything.
     func armPrevious() {
-        guard firstVideoID != nil else { return }
+        guard firstStopID != nil else { return }
         let i = index(of: armedCueID) ?? cues.count
         armedByUser = true
-        armedCueID = videoIndex(before: i).map { cues[$0].id } ?? firstVideoID
+        armedCueID = stopIndex(before: i).map { cues[$0].id } ?? firstStopID
     }
 
     func arm(_ id: UUID) {
-        guard isVideo(id) else { return }
+        guard isStop(id) else { return }
         armedByUser = true
         armedCueID = id
     }
 
-    /// Double-click: plays a video now, or shows a loop row's loop now.
+    /// Double-click: plays a video (or a loop that is a stop of its own) now, or shows another loop now.
     func playNow(_ id: UUID) {
         guard let i = index(of: id) else { return }
-        if cues[i].isLoop { showLoop(row: id) } else { go(to: i) }
+        if cues[i].isLoop && !isStop(id) { showLoop(row: id) } else { go(to: i) }
     }
 
     func go(to index: Int) {
-        guard cues.indices.contains(index), !cues[index].isLoop else { return }
+        guard cues.indices.contains(index), isStop(cues[index].id) else { return }
+        if cues[index].isLoop { goToLoopStop(cues[index]); return }
         let cue = cues[index]
         let fade = max(0, setlist.crossfade)
         let target = 1 - activeSlot
@@ -356,6 +365,52 @@ final class PlaybackEngine: ObservableObject {
         }
     }
 
+    /// A loop no video plays (an artist with only loops) is a stop of its own: Next shows it, and the next
+    /// Next moves on. From another loop it dips to black for a moment while the loop player switches.
+    private func goToLoopStop(_ row: Cue) {
+        let fade = max(0, setlist.crossfade)
+        lastGo = Date()
+        lastError = nil
+        forcedLoop = nil
+        showLog("Play loop \"\(row.title)\" (a stop of its own, from \(phase))")
+        playingCueID = row.id
+        armedByUser = false
+        armedCueID = cueAfter(row.id)
+
+        guard phase == .loop else {
+            blackout = false
+            prepareLoop(for: row.id)
+            enterLoop(liftBlackout: true)
+            return
+        }
+        paused = false
+        blackout = false
+        guard setlist.loopFor(cueID: row.id)?.path != loopPath else {
+            prepareLoop(for: row.id)        // the same video: nothing to switch
+            loopPlayer.play()
+            render(0.4)
+            return
+        }
+        let half = max(fade / 2, 0.2)
+        dipping = true
+        render(half)
+        fadeInFlight = true
+        fadeGeneration += 1
+        let generation = fadeGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + half + 0.03) { [weak self] in
+            guard let self, self.fadeGeneration == generation else { return }
+            self.prepareLoop(for: row.id)
+            self.loopPlayer.play()
+            self.dipping = false
+            self.render(half)
+            DispatchQueue.main.asyncAfter(deadline: .now() + half) { [weak self] in
+                guard let self, self.fadeGeneration == generation else { return }
+                self.fadeInFlight = false
+                self.prepareArmed()
+            }
+        }
+    }
+
     /// Goes to the loop visual. When a video ends by itself, a blackout stays on until the operator lifts it.
     private func enterLoop(liftBlackout: Bool) {
         let fade = max(0, setlist.crossfade)
@@ -420,6 +475,7 @@ final class PlaybackEngine: ObservableObject {
         phase = .idle
         blackout = false
         paused = false
+        dipping = false
         forcedLoop = nil
         playingCueID = nil
         clock.elapsed = 0
@@ -445,10 +501,10 @@ final class PlaybackEngine: ObservableObject {
             self.render(0)
             self.prepareLoop(for: nil)
             self.armedByUser = false
-            if self.armedCueID == self.firstVideoID {
+            if self.armedCueID == self.firstStopID {
                 self.prepareArmed()
             } else {
-                self.armedCueID = self.firstVideoID
+                self.armedCueID = self.firstStopID
             }
         }
     }
@@ -490,8 +546,9 @@ final class PlaybackEngine: ObservableObject {
     }
 
     /// Loads the NEXT video into the free player so it starts instantly. Never touches a player on screen.
+    /// (A loop stop needs nothing loaded: it plays in the loop player.)
     private func prepareArmed() {
-        guard let i = index(of: armedCueID) else { return }
+        guard let i = index(of: armedCueID), !cues[i].isLoop else { return }
         let slot = 1 - activeSlot
         guard visual.slotAlpha[slot] == 0 else { return }
         let cue = cues[i]
