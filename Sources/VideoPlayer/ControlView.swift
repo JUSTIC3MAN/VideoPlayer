@@ -742,7 +742,7 @@ struct TransportView: View {
         guard let id = engine.armedCueID, let cue = setlist.cues.first(where: { $0.id == id }) else {
             return "End of setlist"
         }
-        return cue.title
+        return cue.isLoop ? "\(cue.title) (loop)" : cue.title
     }
 
     var body: some View {

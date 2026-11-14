@@ -21,6 +21,11 @@ jobs:
       - name: Build
         run: ./build.sh
 
+      - name: Loop order check (the app's own setlist code with made-up shows; DJ loops, typed numbers)
+        run: |
+          swiftc Sources/VideoPlayer/Models.swift .github/layout-check/main.swift -o "$RUNNER_TEMP/layout-check"
+          "$RUNNER_TEMP/layout-check"
+
       - name: Old setlist formats carry over (their loops become loop rows)
         run: |
           M="$PWD/.github/test-media"
@@ -100,8 +105,9 @@ jobs:
           front; sleep 1
           shot 01_opened
 
-          step "KEYS"
-          key "key code 49";  sleep 0.7                 # Space: Next
+          step "KEYS (Next shows a column's loop first, then its videos)"
+          key "key code 49";  sleep 1.2;                shot 01b_space_shows_part1_loop_first
+          key "key code 49";  sleep 0.7                 # Space: Next (red)
           click "seek bar at 75%" $SEEK75; sleep 0.4; shot 02_space_plays_red_then_seek_75
           sleep 3.5;                                    shot 03_red_ended_loop1_on_screen
           key "key code 124"; sleep 1                   # Right arrow: Next
@@ -109,15 +115,17 @@ jobs:
           sleep 2;                                      shot 05_still_paused_2s_later
           key "keystroke \"p\""; sleep 0.5;             shot 06_p_again_resumes
           sleep 3.5;                                    shot 07_blue_ended_loop1_again
-          key "key code 49";  sleep 3.8;                shot 08_green_ended_loop2_on_screen
+          key "key code 49";  sleep 1.5;                shot 08_space_shows_part2_loop_first
+          key "key code 49";  sleep 3.8;                shot 08b_green_ended_loop2_on_screen
 
           step "BUTTONS"
-          click "Previous" $PREVIOUS;   sleep 1;   shot 09_previous_plays_blue
+          click "Previous" $PREVIOUS;   sleep 1;   shot 09_previous_back_to_part2_loop
+          click "Previous" $PREVIOUS;   sleep 1;   shot 09b_previous_again_plays_blue
           click "Pause" $PAUSE;         sleep 1;   shot 10_pause_button_paused
           click "Resume" $PAUSE;        sleep 3.8; shot 11_resume_then_blue_ended_loop1
           click "Stop" $STOP;           sleep 1.5; shot 12_click_stop_black
-          click "NEXT" $NEXT;           sleep 1.5; shot 13_click_next_plays_red
-          sleep 3.5;                                          shot 14_red_ended_loop1
+          click "NEXT" $NEXT;           sleep 1.5; shot 13_click_next_shows_part1_loop_first
+          click "NEXT" $NEXT;           sleep 4;   shot 14_next_red_ended_loop1
           click "NEXT" $NEXT;           sleep 0.8
           click "Blackout" $BLACKOUT;   sleep 1;   shot 15_next_blue_then_blackout_on
           sleep 3.5;                                          shot 16_blue_ended_screen_stays_black
@@ -125,8 +133,7 @@ jobs:
           click "Loop" $LOOP;           sleep 1;   shot 18_click_loop
           click "Back One" $BACKONE; sleep 1;   shot 19_back_one_next_moves_up
           dclick "yellow" $YELLOW;            sleep 4.3; shot 20_yellow_ended_its_own_loop3
-          dclick "loop_2" $LOOP2;             sleep 1.5; shot 21_doubleclick_loop2_shows_it_now
-          key "keystroke \"l\""; sleep 1;            shot 21b_L_back_to_yellows_own_loop3
+          dclick "loop_2" $LOOP2;             sleep 1.5; shot 21_doubleclick_loop2_plays_it
           click "red" $RED;                   sleep 0.5
           click "Use as Loop" $USELOOP; sleep 1; shot 22_red_turned_into_a_loop
           click "Use as Video" $USELOOP; sleep 1; shot 23_red_back_to_a_video
@@ -136,8 +143,7 @@ jobs:
           rclick "green" $GREEN;        sleep 1
           key "keystroke \"Set\""; sleep 0.5; key "key code 36"; sleep 1; shot 23b_green_set_as_next
           key "keystroke \"l\""; sleep 1.5;          shot 23c_L_before_show_shows_part2_loop
-          dclick "loop_bars" $LOOPBARS;       sleep 1.5; shot 23d_doubleclick_loop_bars
-          key "keystroke \"l\""; sleep 1;            shot 23e_L_back_to_part2_loop
+          click "NEXT" $NEXT;           sleep 1;   shot 23d_next_plays_green_picked_by_hand
           click "Stop" $STOP;           sleep 1.5
 
           step "COLUMNS"
@@ -182,21 +188,22 @@ jobs:
           python3 - app.log <<'PY'
           import sys
           log = open(sys.argv[1], errors="replace").read().splitlines()
-          want = ['Play #1 "song_red"', "Loop visual: loop_bars",          # Space; part 1's loop
+          want = ['Play loop "loop_bars"', "Loop visual: loop_bars",       # Space: part 1's loop comes up first
+                  'Play #1 "song_red"', "Loop visual: loop_bars",          # Space: red, then part 1's loop
                   'Play #2 "song_blue"', "Paused", "Resumed",              # Right arrow; P; P
                   "Loop visual: loop_bars",
-                  'Play #3 "song_green"', "Loop visual: loop_2",           # Space; part 2's loop
-                  'Play #2 "song_blue"',                                   # Previous button
+                  'Play loop "loop_2"',                                    # Space: part 2's loop first
+                  'Play #3 "song_green"', "Loop visual: loop_2",           # Space: green, then part 2's loop
+                  'Play loop "loop_2"', 'Play #2 "song_blue"',             # Previous twice: part 2's loop, then blue
                   "Paused", "Resumed", "Loop visual: loop_bars",           # Pause / Resume buttons
-                  "Stop", 'Play #1 "song_red"', "Loop visual: loop_bars",  # Stop; NEXT
+                  "Stop", 'Play loop "loop_bars"',                         # Stop; NEXT: part 1's loop first again
+                  'Play #1 "song_red"', "Loop visual: loop_bars",          # NEXT
                   'Play #2 "song_blue"', "Blackout on", "Loop visual: loop_bars", "Blackout off",
                   'Play #4 "song_yellow"', "Loop visual: loop_3",          # double-click; its own loop
-                  "Show loop now: loop_2",                                 # double-click a loop row
-                  "Loop visual: loop_3",                                   # L: back to yellow's own loop
+                  'Play loop "loop_2"',                                    # double-click a loop row Next stops on
                   "Now a loop: song_red", "Now a video: song_red",         # Use as Loop / Use as Video
                   "Stop", "Loop visual: loop_2",                           # Set as Next green; L before the show
-                  "Show loop now: loop_bars", "Loop visual: loop_2",       # pick one by hand; L goes back
-                  "Stop",
+                  'Play #3 "song_green"', "Stop",                          # NEXT plays the video picked by hand
                   "Column named Kimiko",                                   # double-click a column name, type, Return
                   "Moved song_yellow to column Kimiko",                    # right-click → Move to Column
                   "Moved song_green to column Kimiko",                     # drag to another column

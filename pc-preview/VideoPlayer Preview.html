@@ -89,6 +89,11 @@
   .row.loop .thumb { box-shadow: 0 0 0 2px var(--orange); }
   .row.loop.sel .num { color: #fff; }
   .lp { font-size: 10px; font-weight: 700; color: var(--orange); margin-right: 6px; }
+  /* A loop's video numbers: click and type them */
+  .numchip { border: 1px solid rgba(235,235,245,.35); border-radius: 4px; padding: 0 5px; cursor: default; color: var(--text2); font-variant-numeric: tabular-nums; }
+  .numchip.typed { color: var(--text); }
+  .numchip:hover { border-color: var(--accent); }
+  .numedit { width: 110px; font: 10px var(--font); font-variant-numeric: tabular-nums; background: rgba(0,0,0,.35); border: 1px solid var(--accent); border-radius: 4px; color: var(--text); padding: 0 4px; outline: none; }
   .row.sel .lp { color: #fff; }
   .insert-line { position: absolute; left: 10px; right: 10px; height: 2px; background: var(--accent); border-radius: 1px; pointer-events: none; display: none; }
   .insert-line::before { content: ""; position: absolute; left: -4px; top: -3px; width: 6px; height: 6px; border: 2px solid var(--accent); border-radius: 50%; background: var(--pane); }
@@ -450,23 +455,76 @@ function makeLoopRef(file) {
   return ref;
 }
 
-// Row numbers and the parts of the show (mirrors SetlistLayout in Models.swift)
+// Row numbers, which loop plays after each video, and the stops for Next (mirrors SetlistLayout in Models.swift).
+// A video plays its own loop, else the loop whose typed numbers include it, else the nearest loop row above it with
+// no typed numbers, else none. Stops, column by column: when the show moves into a column, that column's loop comes
+// up first (the first loop in it, or else the loop of its first video), so an artist's loop is up while they walk on;
+// then the column's videos, and its loops that no video plays.
 function layout() {
-  const L = { videoNumber: new Map(), parts: new Map(), loopAbove: new Map(), videoCount: 0, loopCount: 0, noLoop: [] };
-  let current = null;
+  const L = { videoNumber: new Map(), parts: new Map(), loopOf: new Map(), videoCount: 0, loopCount: 0, noLoop: [], steps: [] };
+  // Every loop first (a video can come before the loop its typed numbers put it in)
+  const typed = new Map();
+  for (const c of S.cues) if (c.isLoop) {
+    L.loopCount++;
+    L.parts.set(c.id, { number: L.loopCount, title: c.title, videos: [], typed: c.covers != null });
+    if (c.covers) for (const v of c.covers) if (!typed.has(v)) typed.set(v, c.id);
+  }
+  let above = null;
   for (const c of S.cues) {
     if (c.isLoop) {
-      L.loopCount++;
-      L.parts.set(c.id, { number: L.loopCount, title: c.title, videos: [] });
-      current = c.id;
+      if (c.covers == null) above = c.id;
     } else {
       L.videoCount++;
       L.videoNumber.set(c.id, L.videoCount);
-      if (current != null) { L.loopAbove.set(c.id, current); L.parts.get(current).videos.push(L.videoCount); }
-      else if (!c.loop) L.noLoop.push(L.videoCount);
+      if (c.loop) continue;
+      const loop = typed.get(c.id) ?? above;
+      if (loop != null) { L.loopOf.set(c.id, loop); L.parts.get(loop).videos.push(L.videoCount); }
+      else L.noLoop.push(L.videoCount);
     }
   }
+  let loopUp = null;   // the loop that is up after the previous column's last stop
+  for (const k of S.columns) {
+    const rows = S.cues.filter(c => colOf(c) === k.id);
+    const own = rows.filter(c => !c.isLoop || !L.parts.get(c.id).videos.length).map(c => c.id);
+    if (!own.length) continue;
+    const firstVideo = rows.find(c => !c.isLoop);
+    const first = rows.find(c => c.isLoop)?.id ?? (firstVideo ? L.loopOf.get(firstVideo.id) : undefined);
+    if (first != null && !own.includes(first) && first !== loopUp) L.steps.push(first);
+    L.steps.push(...own);
+    const last = own[own.length - 1];
+    loopUp = L.parts.has(last) ? last : (L.loopOf.get(last) ?? null);
+  }
   return L;
+}
+// Typed video numbers: "1,2,3,4" → [1,2,3,4]; "1-4" → [1,2,3,4]; "1-3, 7" → [1,2,3,7]; null when unreadable
+function parseNumbers(text) {
+  const tidy = text.replace(/\s*[-–—]\s*/g, "-"), out = [];
+  for (const tok of tidy.split(/[,;\s]+/).filter(Boolean)) {
+    const e = tok.split("-");
+    if (e.length === 1 && /^\d+$/.test(e[0]) && +e[0] > 0) out.push(+e[0]);
+    else if (e.length === 2 && /^\d+$/.test(e[0]) && /^\d+$/.test(e[1]) && +e[0] > 0 && +e[0] <= +e[1] && +e[1] - +e[0] < 1000) { for (let n = +e[0]; n <= +e[1]; n++) out.push(n); }
+    else return null;
+  }
+  const u = [...new Set(out)];
+  return u.length ? u : null;
+}
+// The loop then plays after those videos, which leave any other loop's numbers. Empty: back to the videos below it.
+function setLoopNumbers(id, text) {
+  const row = S.cues.find(c => c.id === id && c.isLoop); if (!row) return false;
+  if (!text.trim()) { row.covers = null; cuesChanged(); return true; }
+  const nums = parseNumbers(text); if (!nums) { renderAll(); return false; }
+  const at = new Map([...layout().videoNumber].map(([vid, n]) => [n, vid]));
+  const ids = nums.map(n => at.get(n)).filter(v => v != null);
+  for (const c of S.cues) if (c !== row && c.isLoop && c.covers) c.covers = c.covers.filter(v => !ids.includes(v));
+  row.covers = ids;
+  cuesChanged();
+  return true;
+}
+// "1-4", "1-2, 5": numbers the way they are typed
+function numbersForTyping(nums) {
+  const runs = [];
+  for (const n of [...nums].sort((a, b) => a - b)) { const l = runs[runs.length - 1]; if (l && l[1] + 1 === n) l[1] = n; else runs.push([n, n]); }
+  return runs.map(([a, b]) => a === b ? `${a}` : `${a}-${b}`).join(", ");
 }
 // "video 3", "videos 1–4", "videos 1–2, 5"
 function videosText(nums) {
@@ -478,15 +536,17 @@ function videosText(nums) {
   }
   return (nums.length === 1 ? "video " : "videos ") + runs.map(([a, b]) => a === b ? `${a}` : `${a}–${b}`).join(", ");
 }
-// The loop after a row, and the loop row it comes from: a video's own loop, else the nearest loop row above it
-// (none above: black). Before anything has played: the first loop row.
+// The loop after a row, and the loop row it comes from: a video's own loop, else the loop whose typed numbers include
+// it, else the nearest loop row above it with no typed numbers (none: black). Before anything has played: the first loop row.
 function loopSource(id) {
   const i = S.cues.findIndex(c => c.id === id);
   if (i < 0) { const f = S.cues.find(c => c.isLoop); return { url: f?.url ?? null, rowId: f?.id ?? null }; }
   const c = S.cues[i];
   if (c.isLoop) return { url: c.url, rowId: c.id };
   if (c.loop) return { url: c.loop.url, rowId: null };
-  for (let j = i - 1; j >= 0; j--) if (S.cues[j].isLoop) return { url: S.cues[j].url, rowId: S.cues[j].id };
+  const t = S.cues.find(k => k.isLoop && k.covers?.includes(c.id));
+  if (t) return { url: t.url, rowId: t.id };
+  for (let j = i - 1; j >= 0; j--) if (S.cues[j].isLoop && S.cues[j].covers == null) return { url: S.cues[j].url, rowId: S.cues[j].id };
   return { url: null, rowId: null };
 }
 
@@ -496,20 +556,24 @@ const E = {
   slots: [$("v0"), $("v1")], slotCue: [null, null], slotUrl: [null, null],
   active: 0, visual: { alpha: [0, 0], top: 0, loopAlpha: 0 },
   loopUrl: null, loopRowId: null, forced: null,   // forced: a loop row picked by hand (double-click), until the next video
+  dipping: false,                                 // a short dip to black while one loop stop hands over to the next
+  steps: [], curStep: null, armedStep: null,      // the stops, the one on screen, the one marked NEXT (places: a loop can be in twice)
   fadeGen: 0, fadeInFlight: false, lastGo: 0, ramps: [null, null],
 };
 const loopV = $("loopV");
 const idx = id => S.cues.findIndex(c => c.id === id);
-const isVid = id => { const i = idx(id); return i >= 0 && !S.cues[i].isLoop; };
-// Loop rows are never played by Next, Previous or Back One, so these skip them.
-const firstVideoId = () => S.cues.find(c => !c.isLoop)?.id ?? null;
-const cueAfter = id => {
-  const i = idx(id); if (i < 0) return firstVideoId();
-  for (let j = i + 1; j < S.cues.length; j++) if (!S.cues[j].isLoop) return S.cues[j].id;
-  return null;
-};
-const videoBefore = i => { for (let j = i - 1; j >= 0; j--) if (!S.cues[j].isLoop) return j; return -1; };
-const automaticNext = () => E.playingId == null ? firstVideoId() : cueAfter(E.playingId);
+// Next, Previous and Back One step through the stops (layout().steps): every video, every loop no video plays,
+// and, when the show moves into a new column, that column's loop first.
+const isStop = id => id != null && E.steps.includes(id);
+// Where a row is in the stops: the place nearest to `near`
+function stepIndexOf(id, near) {
+  const places = E.steps.map((s, k) => s === id ? k : -1).filter(k => k >= 0);
+  if (!places.length) return null;
+  if (near == null) return places[0];
+  return places.reduce((a, b) => Math.abs(b - near) < Math.abs(a - near) ? b : a);
+}
+const automaticNextStep = () => E.curStep == null ? (E.steps.length ? 0 : null) : (E.curStep + 1 < E.steps.length ? E.curStep + 1 : null);
+function setArmedStep(k) { E.armedStep = k; setArmed(k != null && k < E.steps.length ? E.steps[k] : null); }
 
 function setArmed(id) {
   const changed = id !== E.armedId; E.armedId = id;
@@ -517,8 +581,22 @@ function setArmed(id) {
 }
 
 function cuesChanged() {
-  if (E.armedByUser && isVid(E.armedId)) prepareArmed();
-  else { E.armedByUser = false; const n = automaticNext(); if (n !== E.armedId) setArmed(n); else prepareArmed(); }
+  // The stops may have changed: find our places in the new list
+  const oldSteps = E.steps, oldCur = E.curStep, oldArmed = E.armedStep;
+  E.steps = layout().steps;
+  if (E.playingId == null) E.curStep = null;
+  else {
+    const k = stepIndexOf(E.playingId, oldCur);
+    if (k != null) E.curStep = k;
+    else if (oldCur != null) {   // what's on screen isn't a stop any more: carry on from the last earlier stop that still is one
+      E.curStep = null;
+      for (let j = Math.min(oldCur, oldSteps.length) - 1; j >= 0; j--) { const m = stepIndexOf(oldSteps[j], j); if (m != null) { E.curStep = m; break; } }
+    }
+  }
+  const keep = E.armedByUser ? stepIndexOf(E.armedId, oldArmed) : null;
+  if (keep != null) setArmedStep(keep);
+  else { E.armedByUser = false; setArmedStep(automaticNextStep()); }
+  prepareArmed();
   // Loop rows may have been added, moved or changed: keep the loop for this video up to date.
   if (E.phase === "playing") { if (!E.fadeInFlight) prepareLoop(E.playingId); }
   else if (E.phase === "loop") { const before = E.loopUrl; prepareLoop(E.playingId); if (E.loopUrl !== before && !E.paused) loopV.play().catch(()=>{}); }
@@ -532,7 +610,7 @@ function render(duration) {
   loopV.style.zIndex = 0;
   loopV.style.transition = "none"; loopV.style.opacity = v.loopAlpha;
   const tr = duration > 0 ? `opacity ${duration}s ease-in-out` : "none";
-  const black = E.blackout || E.phase === "idle";
+  const black = E.blackout || E.phase === "idle" || E.dipping;
   for (const el of [E.slots[0], E.slots[1], $("black")]) el.style.transition = tr;
   void st.offsetWidth;   // apply "no transition" before changing values
   E.slots[0].style.opacity = v.alpha[0];
@@ -545,18 +623,15 @@ const pressedDuringFade = () => performance.now() - E.lastGo <= Math.max(.35, Ma
 // Next (A on a controller)
 function next() {
   if (pressedDuringFade()) return;
-  const i = idx(E.armedId);
-  if (i < 0 || S.cues[i].isLoop) return;
-  go(i);
+  if (E.armedStep == null || E.steps[E.armedStep] == null) return;
+  goStep(E.armedStep);
 }
-// Previous (B on a controller): the video before the one playing now (or before the one whose loop is up).
-// On the first video it starts that video again.
+// Previous (B on a controller): the stop before the one playing now (or before the one whose loop is up).
+// On the first stop it starts that one again.
 function playPrevious() {
   if (pressedDuringFade()) return;
-  const cur = idx(E.playingId);
-  if (cur < 0) return;
-  const p = videoBefore(cur);
-  go(p >= 0 ? p : cur);
+  if (E.curStep == null) return;
+  goStep(Math.max(0, E.curStep - 1));
 }
 // Pause (P, or Y on a controller): freezes the video or loop on screen; press again to carry on
 function togglePause() {
@@ -567,23 +642,54 @@ function togglePause() {
   renderAll();
 }
 function armPrevious() {
-  if (firstVideoId() == null) return;
-  const i = idx(E.armedId) < 0 ? S.cues.length : idx(E.armedId);
-  const b = videoBefore(i);
-  E.armedByUser = true; setArmed(b >= 0 ? S.cues[b].id : firstVideoId()); renderAll();
+  if (!E.steps.length) return;
+  E.armedByUser = true; setArmedStep(Math.max(0, (E.armedStep ?? E.steps.length) - 1)); renderAll();
 }
-function arm(id) { if (!isVid(id)) return; E.armedByUser = true; setArmed(id); renderAll(); }
-// Double-click: plays a video now, or shows a loop row's loop now
-function playNow(id) { const i = idx(id); if (i < 0) return; if (S.cues[i].isLoop) showLoopRow(id); else go(i); }
+function arm(id) { const k = stepIndexOf(id, (E.curStep ?? -1) + 1); if (k == null) return; E.armedByUser = true; setArmedStep(k); renderAll(); }
+// Double-click: plays a stop (a video, or a loop Next stops on) now, or shows any other loop now
+function playNow(id) {
+  const k = stepIndexOf(id, (E.curStep ?? -1) + 1);
+  if (k != null) goStep(k);
+  else if (S.cues[idx(id)]?.isLoop) showLoopRow(id);
+}
+// Plays the stop at place k: a video, or a loop. NEXT moves to the stop after it.
+function goStep(k) {
+  const i = idx(E.steps[k]); if (i < 0) return;
+  E.curStep = k;
+  const nx = k + 1 < E.steps.length ? k + 1 : null;
+  if (S.cues[i].isLoop) goToLoopStop(S.cues[i], nx); else go(i, nx);
+}
 
-function go(i) {
+// A loop that is a stop (an artist with only loops, or the loop that comes up first for a column): Next shows it,
+// the next Next moves on. Loop to loop dips to black for a moment while the loop player switches.
+function goToLoopStop(row, nx) {
+  const fade = Math.max(0, S.crossfade);
+  E.lastGo = performance.now(); E.lastError = null; E.forced = null;
+  E.playingId = row.id; E.armedByUser = false; setArmedStep(nx);
+  if (E.phase !== "loop") { E.blackout = false; prepareLoop(row.id); showLoop(true); return; }
+  E.paused = false; E.blackout = false;
+  if (loopSource(row.id).url === E.loopUrl) { prepareLoop(row.id); loopV.play().catch(()=>{}); render(.4); renderAll(); return; }
+  const half = Math.max(fade / 2, .2);
+  E.dipping = true; render(half);
+  E.fadeInFlight = true; const gen = ++E.fadeGen;
+  setTimeout(() => {
+    if (gen !== E.fadeGen) return;
+    prepareLoop(row.id); loopV.play().catch(()=>{});
+    E.dipping = false; render(half);
+    setTimeout(() => { if (gen !== E.fadeGen) return; E.fadeInFlight = false; prepareArmed(); renderAll(); }, half * 1000);
+    renderAll();
+  }, (half + .03) * 1000);
+  renderAll();
+}
+
+function go(i, nx) {
   const cue = S.cues[i]; if (!cue || cue.isLoop) return;
   const fade = Math.max(0, S.crossfade), target = 1 - E.active, old = E.active, wasPlaying = E.phase === "playing";
   E.lastGo = performance.now(); E.lastError = null; E.blackout = false; E.paused = false; E.forced = null;
   if (E.slotCue[target] !== cue.id || E.slotUrl[target] !== cue.url) load(target, cue);
   else if (E.slots[target].currentTime > .01) E.slots[target].currentTime = 0;
   E.active = target; E.phase = "playing"; E.playingId = cue.id;
-  E.armedByUser = false; setArmed(cueAfter(cue.id));
+  E.armedByUser = false; setArmedStep(nx);   // after the switch, so the free player gets the next video
   const p = E.slots[target];
   p.muted = !S.videoAudio;
   if (wasPlaying && fade > 0) { p.volume = 0; ramp(target, 1, fade); ramp(old, 0, fade); }
@@ -652,7 +758,7 @@ function showLoopRow(id) {
 function toggleBlackout() { E.blackout = !E.blackout; render(.4); renderAll(); }
 
 function stop() {
-  E.phase = "idle"; E.blackout = false; E.paused = false; E.forced = null; E.playingId = null; render(.5);
+  E.phase = "idle"; E.blackout = false; E.paused = false; E.dipping = false; E.forced = null; E.playingId = null; E.curStep = null; render(.5);
   ramp(0, 0, .5); ramp(1, 0, .5);
   E.fadeInFlight = true; const gen = ++E.fadeGen;
   setTimeout(() => {
@@ -661,8 +767,7 @@ function stop() {
     E.slots.forEach((p, i) => { cancelRamp(i); p.pause(); p.volume = 1; });
     loopV.pause(); E.visual.alpha = [0, 0]; E.visual.loopAlpha = 0; render(0);
     prepareLoop(null); E.armedByUser = false;
-    const first = firstVideoId();
-    if (E.armedId === first) prepareArmed(); else setArmed(first);
+    setArmedStep(E.steps.length ? 0 : null); prepareArmed();
     renderAll();
   }, 550);
   renderAll();
@@ -675,8 +780,8 @@ function load(slot, cue) {
   E.slotCue[slot] = cue.id; E.slotUrl[slot] = cue.url;
   v.src = cue.url; v.currentTime = 0; v.load();
 }
-function prepareArmed() {
-  const i = idx(E.armedId); if (i < 0) return;
+function prepareArmed() {     // a loop stop needs nothing loaded: it plays in the loop player
+  const i = idx(E.armedId); if (i < 0 || S.cues[i].isLoop) return;
   const slot = 1 - E.active;
   if (E.visual.alpha[slot] !== 0) return;
   const cue = S.cues[i];
@@ -750,17 +855,18 @@ function rowElement(c, L) {
   row.className = "row" + (c.isLoop ? " loop" : "") + (S.selection.has(c.id) ? " sel" : "");
   row.draggable = true; row.dataset.id = c.id;
   if (c.isLoop) {
-    const part = L.parts.get(c.id);
-    const cover = part.videos.length ? "Plays after " + videosText(part.videos) : "No videos below it yet: drag it above the first video it should follow";
+    const part = L.parts.get(c.id), own = !part.videos.length;
     const onScreen = E.phase === "loop" && E.loopRowId === c.id;
-    const b = onScreen ? (E.paused ? badge("PAUSED", "var(--yellow)", "#000") : badge("ON SCREEN", "var(--orange)")) : "";
+    let b = onScreen ? (E.paused ? badge("PAUSED", "var(--yellow)", "#000") : badge("ON SCREEN", "var(--orange)")) : "";
+    if (E.armedId === c.id) b += badge("NEXT", "var(--accent)");
     row.innerHTML = `
       <div class="num">∞</div><div class="tw">${thumbHtml(c)}<div class="tb">${b}</div></div>
-      <div class="meta"><div class="ttl"><span class="lp">LOOP ${part.number}</span>${esc(c.title)}</div><div class="sub"><span>${cover}</span></div></div>
+      <div class="meta"><div class="ttl"><span class="lp">LOOP ${part.number}</span>${esc(c.title)}</div>
+        <div class="sub"><span>${own ? "Its own stop ·" : "Plays after"}</span>${numsHtml(c, part, "row")}</div></div>
       ${b}`;
   } else {
-    const above = L.loopAbove.has(c.id) ? L.parts.get(L.loopAbove.get(c.id)) : null;
-    const loopLabel = c.loop ? `↻ then its own loop: ${esc(c.loop.name)}` : above ? `↻ then Loop ${above.number}: ${esc(above.title)}` : "↻ then black (no loop above it)";
+    const above = L.loopOf.has(c.id) ? L.parts.get(L.loopOf.get(c.id)) : null;
+    const loopLabel = c.loop ? `↻ then its own loop: ${esc(c.loop.name)}` : above ? `↻ then Loop ${above.number}: ${esc(above.title)}` : "↻ then black (no loop)";
     let badges = "";
     if (E.playingId === c.id) badges += E.phase === "playing"
       ? (E.paused ? badge("PAUSED", "var(--yellow)", "#000") : badge("PLAYING", "var(--green)"))
@@ -773,6 +879,38 @@ function rowElement(c, L) {
   }
   return row;
 }
+
+// A loop's video numbers: a box to click and type into ("row" in the setlist, "side" in the Loops panel)
+let editingNums = null;   // {id, where, original, text} while typing
+function numsHtml(c, part, where) {
+  if (editingNums && editingNums.id === c.id && editingNums.where === where)
+    return `<input type="text" class="numedit" data-loop="${c.id}" value="${esc(editingNums.text ?? editingNums.original)}" placeholder="1,2,3,4" spellcheck="false">`;
+  return `<span class="numchip${part.typed ? " typed" : ""}" data-loop="${c.id}" data-where="${where}" title="Click and type the numbers of the videos this loop plays after, like 1,2,3,4 or 1-4. Leave it empty to use the videos below it.">${part.videos.length ? videosText(part.videos) : "type numbers"}</span>`;
+}
+function startNums(id, where) {
+  const part = layout().parts.get(id); if (!part) return;
+  editingNums = { id, where, original: part.typed ? numbersForTyping(part.videos) : "", text: null };
+  renderAll();
+  const inp = document.querySelector(`.numedit[data-loop="${id}"]`);
+  if (inp) { inp.focus(); inp.select(); }
+}
+// apply: true (Return), false (Esc), "auto" (clicked elsewhere: apply only if changed)
+function finishNums(apply) {
+  if (!editingNums) return;
+  const { id, original } = editingNums;
+  const inp = document.querySelector(`.numedit[data-loop="${id}"]`);
+  const text = inp ? inp.value : (editingNums.text ?? original);
+  editingNums = null;
+  if (apply === "auto") apply = text !== original;
+  if (apply) setLoopNumbers(id, text); else renderAll();
+}
+document.addEventListener("input", e => { if (e.target.classList?.contains("numedit") && editingNums) editingNums.text = e.target.value; });
+document.addEventListener("keydown", e => {
+  if (!e.target.classList?.contains("numedit")) return;
+  if (e.key === "Enter") { e.preventDefault(); finishNums(true); }
+  else if (e.key === "Escape") { e.preventDefault(); finishNums(false); }
+});
+document.addEventListener("focusout", e => { if (e.target.classList?.contains("numedit")) finishNums("auto"); });
 
 // The columns share the width (at least 250 px each) and scroll sideways when there are more than fit
 function sizeColumns() {
@@ -838,7 +976,7 @@ function renderSide() {
     : E.phase === "playing" ? ["PLAYING", "var(--green)"] : E.phase === "loop" ? ["LOOP", "var(--orange)"] : ["STANDBY", "var(--gray)"];
   tag.textContent = t; tag.style.background = col; tag.style.color = fg || "#fff";
   const armed = S.cues.find(c => c.id === E.armedId);
-  $("nextTitle").textContent = armed ? armed.title : "End of setlist";
+  $("nextTitle").textContent = armed ? armed.title + (armed.isLoop ? " (loop)" : "") : "End of setlist";
   $("nextBtn").disabled = !armed;
   $("prevBtn").disabled = E.playingId == null;
   $("pauseBtn").disabled = E.phase === "idle";
@@ -855,13 +993,13 @@ function renderSide() {
   let html = loops.length ? "" : `<div style="color:var(--text2)">No loops yet, so the screen goes black after each video.</div>`;
   html += loops.map(c => { const p = L.parts.get(c.id); return `
     <div class="slot" data-sel="${c.id}" title="Click to select it in the setlist"><span class="n">${p.number}</span>${thumbHtml(c)}
-      <span class="nm">${esc(c.title)}</span><span class="cov">${videosText(p.videos)}</span></div>`; }).join("");
+      <span class="nm">${esc(c.title)}</span>${p.videos.length ? "" : `<span class="cov">own stop</span>`}<span class="cov">${numsHtml(c, p, "side")}</span></div>`; }).join("");
   if (loops.length && L.noLoop.length) {
     const t = videosText(L.noLoop);
-    html += `<div class="warnline">⚠ ${t[0].toUpperCase() + t.slice(1)} ${L.noLoop.length === 1 ? "has" : "have"} no loop above, so the screen goes black after.</div>`;
+    html += `<div class="warnline">⚠ ${t[0].toUpperCase() + t.slice(1)} ${L.noLoop.length === 1 ? "has" : "have"} no loop, so the screen goes black after.</div>`;
   }
   html += `<div><button class="btn" id="addLoopBtn" title="Adds a loop above the selected row (with nothing selected: at the top, or at the end if there are loops already)">Add Loop…</button></div>
-    <div class="cap">Any video can be a loop: select it and click Use as Loop, or right-click it. A loop plays after every video below it, up to the next loop, so each loop covers one part of the show. Drag a loop up or down to change how many videos it covers. Double-click a loop to show it now.</div>`;
+    <div class="cap">Any video can be a loop: select it and click Use as Loop, or right-click it. Click a loop's numbers and type the videos it plays after (1,2,3,4 or 1-4). With no numbers typed, a loop plays after the videos below it, up to the next loop. A loop with no videos is a stop of its own: Next shows it. Double-click a loop to show it now.</div>`;
   $("loopSchedule").innerHTML = html;
 
   $("outBtn").textContent = isOut() ? "Hide Output (Esc)" : "Show Output Full Screen (F)";
@@ -869,7 +1007,13 @@ function renderSide() {
   $("stage").classList.toggle("fill", S.fill);
   $("xfadeVal").textContent = S.crossfade.toFixed(1) + " s";
 }
-function renderAll() { renderList(); renderSide(); }
+function renderAll() {
+  renderList(); renderSide();
+  if (editingNums) {
+    const inp = document.querySelector(`.numedit[data-loop="${editingNums.id}"]`);
+    if (inp && document.activeElement !== inp) { inp.focus(); const n = inp.value.length; inp.setSelectionRange(n, n); }
+  }
+}
 
 // Seek bar (mirrors SeekBar in ControlView.swift)
 let scrubbing = false, scrubTime = 0;
@@ -951,6 +1095,9 @@ $("backBtn").onclick = armPrevious; $("loopBtn").onclick = showSongsLoop;
 $("blackBtn").onclick = toggleBlackout; $("stopBtn").onclick = stop;
 $("loopSchedule").addEventListener("click", e => {
   if (e.target.closest("#addLoopBtn")) { chooseLoop({ row: true }); return; }
+  if (e.target.closest(".numedit")) return;
+  const chip = e.target.closest(".numchip");
+  if (chip) { startNums(+chip.dataset.loop, "side"); return; }
   const s = e.target.closest("[data-sel]");
   if (s) { S.selection = new Set([+s.dataset.sel]); anchorId = +s.dataset.sel; renderList(); }
 });
@@ -995,7 +1142,10 @@ const board = $("board");
 // and the browser doesn't send a dblclick event when the row under the mouse was replaced in between.
 let lastPress = { id: null, t: 0 };
 board.addEventListener("mousedown", e => {
-  if (e.target.closest(".colhead, .addcol, [data-addto]")) return;
+  if (e.target.closest(".colhead, .addcol, [data-addto], .numedit")) return;
+  if (editingNums) finishNums("auto");                 // clicked away from the numbers being typed
+  const chip = e.target.closest(".numchip");
+  if (chip && e.button === 0) { e.preventDefault(); startNums(+chip.dataset.loop, "row"); return; }
   const row = e.target.closest(".row");
   if (!row) { if (e.button === 0 && S.selection.size) { S.selection.clear(); renderList(); } return; }
   const id = +row.dataset.id;
@@ -1027,7 +1177,12 @@ board.addEventListener("contextmenu", e => {
   if (rows.length === 1) {
     const c = rows[0];
     if (c.isLoop) {
-      items.push(["Show This Loop Now", () => showLoopRow(c.id)], "-", ["Use as Video", () => setLoopRows(new Set([c.id]), false)]);
+      const own = isStop(c.id);
+      items.push([own ? "Play Now" : "Show This Loop Now", () => playNow(c.id)]);
+      if (own) items.push(["Set as Next", () => arm(c.id)]);
+      items.push("-", ["Type Its Video Numbers…", () => startNums(c.id, "row")]);
+      if (c.covers != null) items.push(["Use the Videos Below It", () => setLoopNumbers(c.id, "")]);
+      items.push("-", ["Use as Video", () => setLoopRows(new Set([c.id]), false)]);
     } else {
       items.push(["Play Now", () => playNow(c.id)], ["Set as Next", () => arm(c.id)], "-",
                  ["Use as Loop", () => setLoopRows(new Set([c.id]), true)],

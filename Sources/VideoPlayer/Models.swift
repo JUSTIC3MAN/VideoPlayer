@@ -119,19 +119,24 @@ struct SetlistLayout {
     private(set) var loopCount = 0
     /// Videos with no loop at all: the screen goes black after them.
     private(set) var videosWithoutLoop: [Int] = []
-    /// The rows Next and Previous stop on, in show order: every video, and every loop no video plays.
+    /// What Next and Previous step through, column by column: when the show moves into a column, that column's
+    /// loop comes up first (the first loop in it, or else the loop of its first video), so an artist's loop is up
+    /// while they walk on; then the column's videos, and its loops that no video plays. A loop can be in it twice
+    /// (the first loop for two columns). Columns with nothing to stop on (say, loops parked there for their typed
+    /// numbers) add nothing.
     private(set) var steps: [UUID] = []
 
     init(cues: [Cue]) {
+        // Every loop first (a video can come before the loop its typed numbers put it in)
         var typedLoop: [UUID: UUID] = [:]
         for cue in cues where cue.isLoop {
+            loopCount += 1
+            parts[cue.id] = Part(number: loopCount, title: cue.title, typed: cue.covers != nil)
             for video in cue.covers ?? [] where typedLoop[video] == nil { typedLoop[video] = cue.id }
         }
         var above: UUID?      // the nearest loop row above with no typed numbers
         for cue in cues {
             if cue.isLoop {
-                loopCount += 1
-                parts[cue.id] = Part(number: loopCount, title: cue.title, typed: cue.covers != nil)
                 if cue.covers == nil { above = cue.id }
             } else {
                 videoCount += 1
@@ -145,7 +150,21 @@ struct SetlistLayout {
                 }
             }
         }
-        steps = cues.filter { !$0.isLoop || (parts[$0.id]?.videos.isEmpty ?? true) }.map(\.id)
+        var loopUp: UUID?       // the loop that is up after the previous column's last stop
+        var start = 0
+        while start < cues.count {
+            var end = start
+            while end < cues.count && cues[end].column == cues[start].column { end += 1 }
+            let rows = cues[start..<end]
+            let own = rows.filter { !$0.isLoop || (parts[$0.id]?.videos.isEmpty ?? true) }.map(\.id)
+            if let last = own.last {
+                let first = rows.first(where: { $0.isLoop })?.id ?? rows.first(where: { !$0.isLoop }).flatMap { loopOf[$0.id] }
+                if let first, !own.contains(first), first != loopUp { steps.append(first) }
+                steps += own
+                loopUp = parts[last] != nil ? last : loopOf[last]
+            }
+            start = end
+        }
     }
 
     func isStop(_ id: UUID?) -> Bool {

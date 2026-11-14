@@ -37,7 +37,7 @@ final class ShowClock: ObservableObject {
 final class PlaybackEngine: ObservableObject {
     @Published private(set) var phase: ShowPhase = .idle
     @Published private(set) var playingCueID: UUID?
-    @Published var armedCueID: UUID? {
+    @Published private(set) var armedCueID: UUID? {
         didSet {
             guard armedCueID != oldValue else { return }
             prepareArmed()
@@ -79,6 +79,18 @@ final class PlaybackEngine: ObservableObject {
     private var forcedLoop: (row: UUID, file: FileRef)?
     /// A short dip to black while one loop stop hands over to the next (there is one loop player).
     private var dipping = false
+    /// What Next and Previous step through (SetlistLayout.steps), kept up to date with the setlist. A loop can
+    /// be in it twice, so places are kept as indexes.
+    private var steps: [UUID] = []
+    /// The stop on screen (playing, or its loop is up). nil: nothing played yet, or after Stop.
+    private var currentStep: Int?
+    /// The stop marked NEXT (armedCueID is its row).
+    private var armedStep: Int? {
+        didSet {
+            let id = armedStep.flatMap { steps.indices.contains($0) ? steps[$0] : nil }
+            if armedCueID != id { armedCueID = id }
+        }
+    }
     private var bag = Set<AnyCancellable>()
 
     init(setlist: Setlist) {
@@ -106,7 +118,9 @@ final class PlaybackEngine: ObservableObject {
             timeTokens.append(token)
         }
 
-        armedCueID = SetlistLayout(cues: setlist.cues).steps.first
+        steps = SetlistLayout(cues: setlist.cues).steps
+        armedStep = steps.isEmpty ? nil : 0
+        armedCueID = steps.first          // (property observers don't run in init)
 
         // @Published fires before the value changes, so hop to the next run loop pass to read the new value.
         setlist.$cues
@@ -155,44 +169,49 @@ final class PlaybackEngine: ObservableObject {
         return cues.firstIndex { $0.id == id }
     }
 
-    // Next, Previous and Back One stop on every video, and on every loop no video plays (an artist with only
-    // loops). Loops that play after videos are skipped: they come up when their videos end.
-
-    private var stops: Set<UUID> { Set(SetlistLayout(cues: cues).steps) }
+    // Next, Previous and Back One step through the stops (SetlistLayout.steps): every video, every loop no
+    // video plays, and, when the show moves into a new column, that column's loop first. Loops that play after
+    // videos come up when their videos end.
 
     private func isStop(_ id: UUID?) -> Bool {
         guard let id else { return false }
-        return stops.contains(id)
+        return steps.contains(id)
     }
 
-    private var firstStopID: UUID? { SetlistLayout(cues: cues).steps.first }
-
-    /// The stop after a row. An unknown row (nothing played yet): the first stop.
-    private func cueAfter(_ id: UUID?) -> UUID? {
-        guard let i = index(of: id) else { return firstStopID }
-        let stops = self.stops
-        return cues[(i + 1)...].first { stops.contains($0.id) }?.id
+    /// Where a row is in the stops: the place nearest to `near` (a loop can be a stop twice).
+    private func stepIndex(of id: UUID?, near: Int?) -> Int? {
+        guard let id else { return nil }
+        let places = steps.indices.filter { steps[$0] == id }
+        guard let near else { return places.first }
+        return places.min { abs($0 - near) < abs($1 - near) }
     }
 
-    /// The position of the stop before position i.
-    private func stopIndex(before i: Int) -> Int? {
-        let stops = self.stops
-        return cues[..<i].lastIndex { stops.contains($0.id) }
-    }
-
-    /// The row NEXT should point to when it follows the setlist order.
-    private var automaticNext: UUID? {
-        playingCueID == nil ? firstStopID : cueAfter(playingCueID)
+    /// The stop after the current one (nil at the end). Nothing played yet: the first stop.
+    private var automaticNextStep: Int? {
+        guard let currentStep else { return steps.isEmpty ? nil : 0 }
+        return currentStep + 1 < steps.count ? currentStep + 1 : nil
     }
 
     private func cuesChanged() {
-        if armedByUser, isStop(armedCueID) {
-            prepareArmed()                       // keep the hand-picked NEXT (its file may have changed)
+        // The stops may have changed: find our places in the new list.
+        let oldSteps = steps, oldCurrent = currentStep, oldArmed = armedStep
+        steps = SetlistLayout(cues: cues).steps
+        if playingCueID == nil {
+            currentStep = nil
+        } else if let k = stepIndex(of: playingCueID, near: oldCurrent) {
+            currentStep = k
+        } else if let oldCurrent {
+            // What's on screen isn't a stop any more: carry on from the last earlier stop that still is one.
+            currentStep = (0..<min(oldCurrent, oldSteps.count)).reversed()
+                .lazy.compactMap { self.stepIndex(of: oldSteps[$0], near: $0) }.first
+        }
+        if armedByUser, let k = stepIndex(of: armedCueID, near: oldArmed) {
+            armedStep = k                        // keep the hand-picked NEXT
         } else {
             armedByUser = false
-            let next = automaticNext             // order changed: NEXT follows the new order
-            if armedCueID != next { armedCueID = next } else { prepareArmed() }
+            armedStep = automaticNextStep        // order changed: NEXT follows the new order
         }
+        prepareArmed()                           // (its file may have changed)
         // Loop rows may have been added, moved or changed: keep the loop for this video up to date.
         switch phase {
         case .playing:
@@ -212,24 +231,24 @@ final class PlaybackEngine: ObservableObject {
     /// fade (protects against a double-click on a remote skipping a song).
     func next() {
         guard !pressedDuringFade("Next") else { return }
-        guard let i = index(of: armedCueID), isStop(armedCueID) else {
+        guard let k = armedStep, steps.indices.contains(k) else {
             showLog("Next: nothing armed (setlist empty or at the end)")
             NSSound.beep()
             return
         }
-        go(to: i)
+        go(step: k)
     }
 
     /// Previous (B on a game controller): plays the stop before the one playing now (a video, or a loop no
     /// video plays), or before the one whose loop is up. On the first stop it starts that one again.
     func playPrevious() {
         guard !pressedDuringFade("Previous") else { return }
-        guard let current = index(of: playingCueID) else {
-            showLog("Previous: no video has played yet")
+        guard let current = currentStep else {
+            showLog("Previous: nothing has played yet")
             NSSound.beep()
             return
         }
-        go(to: stopIndex(before: current) ?? current)
+        go(step: max(0, current - 1))
     }
 
     private func pressedDuringFade(_ action: String) -> Bool {
@@ -251,27 +270,35 @@ final class PlaybackEngine: ObservableObject {
 
     /// Moves NEXT back by one video. Does not play anything.
     func armPrevious() {
-        guard firstStopID != nil else { return }
-        let i = index(of: armedCueID) ?? cues.count
+        guard !steps.isEmpty else { return }
         armedByUser = true
-        armedCueID = stopIndex(before: i).map { cues[$0].id } ?? firstStopID
+        armedStep = max(0, (armedStep ?? steps.count) - 1)
     }
 
     func arm(_ id: UUID) {
-        guard isStop(id) else { return }
+        guard let k = stepIndex(of: id, near: (currentStep ?? -1) + 1) else { return }
         armedByUser = true
-        armedCueID = id
+        armedStep = k
     }
 
-    /// Double-click: plays a video (or a loop that is a stop of its own) now, or shows another loop now.
+    /// Double-click: plays a stop (a video, or a loop Next stops on) now, or shows any other loop now.
     func playNow(_ id: UUID) {
-        guard let i = index(of: id) else { return }
-        if cues[i].isLoop && !isStop(id) { showLoop(row: id) } else { go(to: i) }
+        if let k = stepIndex(of: id, near: (currentStep ?? -1) + 1) {
+            go(step: k)
+        } else if let i = index(of: id), cues[i].isLoop {
+            showLoop(row: id)
+        }
     }
 
-    func go(to index: Int) {
-        guard cues.indices.contains(index), isStop(cues[index].id) else { return }
-        if cues[index].isLoop { goToLoopStop(cues[index]); return }
+    /// Plays the stop at place k: a video, or a loop. NEXT moves to the stop after it.
+    func go(step k: Int) {
+        guard steps.indices.contains(k), let index = index(of: steps[k]) else { return }
+        currentStep = k
+        let next = k + 1 < steps.count ? k + 1 : nil
+        if cues[index].isLoop { goToLoopStop(cues[index], next: next) } else { playVideo(at: index, next: next) }
+    }
+
+    private func playVideo(at index: Int, next: Int?) {
         let cue = cues[index]
         let fade = max(0, setlist.crossfade)
         let target = 1 - activeSlot
@@ -298,7 +325,7 @@ final class PlaybackEngine: ObservableObject {
         clock.elapsed = 0
         clock.duration = cue.duration
         armedByUser = false
-        armedCueID = cueAfter(cue.id)
+        armedStep = next                    // after the switch, so the free player gets the next video
 
         let player = slotPlayers[target]
         player.isMuted = !setlist.videoAudio
@@ -365,17 +392,18 @@ final class PlaybackEngine: ObservableObject {
         }
     }
 
-    /// A loop no video plays (an artist with only loops) is a stop of its own: Next shows it, and the next
-    /// Next moves on. From another loop it dips to black for a moment while the loop player switches.
-    private func goToLoopStop(_ row: Cue) {
+    /// A loop that is a stop (an artist with only loops, or the loop that comes up first for a column): Next
+    /// shows it, and the next Next moves on. From another loop it dips to black for a moment while the loop
+    /// player switches.
+    private func goToLoopStop(_ row: Cue, next: Int?) {
         let fade = max(0, setlist.crossfade)
         lastGo = Date()
         lastError = nil
         forcedLoop = nil
-        showLog("Play loop \"\(row.title)\" (a stop of its own, from \(phase))")
+        showLog("Play loop \"\(row.title)\" (from \(phase))")
         playingCueID = row.id
         armedByUser = false
-        armedCueID = cueAfter(row.id)
+        armedStep = next
 
         guard phase == .loop else {
             blackout = false
@@ -478,6 +506,7 @@ final class PlaybackEngine: ObservableObject {
         dipping = false
         forcedLoop = nil
         playingCueID = nil
+        currentStep = nil
         clock.elapsed = 0
         clock.duration = 0
         render(0.5)
@@ -501,11 +530,8 @@ final class PlaybackEngine: ObservableObject {
             self.render(0)
             self.prepareLoop(for: nil)
             self.armedByUser = false
-            if self.armedCueID == self.firstStopID {
-                self.prepareArmed()
-            } else {
-                self.armedCueID = self.firstStopID
-            }
+            self.armedStep = self.steps.isEmpty ? nil : 0
+            self.prepareArmed()
         }
     }
 
